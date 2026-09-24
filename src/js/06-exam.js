@@ -1102,7 +1102,7 @@
         '<div class="workshop-body" id="workshop-body"></div>' +
         '<div class="syntax-actions"><button type="button" data-close="1">关闭</button></div>';
       document.body.appendChild(panel);
-      panel.querySelector('[data-close]').addEventListener('click', () => panel.classList.remove('visible'));
+      panel.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', () => panel.classList.remove('visible')));
       panel.querySelectorAll('.workshop-tab').forEach(btn => {
         btn.addEventListener('click', () => {
           panel.querySelectorAll('.workshop-tab').forEach(b => b.classList.remove('active'));
@@ -1128,13 +1128,24 @@
   function getRoots() {
     try { return JSON.parse(localStorage.getItem('wsj_roots:cards')) || []; } catch(e) { return []; }
   }
+  function bindWsAddBtns() {
+    const b1 = document.getElementById('ws-add-material');
+    if (b1) b1.addEventListener('click', () => { document.getElementById('writing-workshop').classList.remove('visible'); openMaterialPanel(''); });
+    const b2 = document.getElementById('ws-add-advice');
+    if (b2) b2.addEventListener('click', () => { document.getElementById('writing-workshop').classList.remove('visible'); openComposePanel(); });
+    const b3 = document.getElementById('ws-add-syntax');
+    if (b3) b3.addEventListener('click', () => { document.getElementById('writing-workshop').classList.remove('visible'); openSyntaxPanel(''); });
+    const b4 = document.getElementById('ws-add-root');
+    if (b4) b4.addEventListener('click', () => { document.getElementById('writing-workshop').classList.remove('visible'); openRootPanel(''); });
+  }
   function renderWorkshopBody(tab) {
     const body = document.getElementById('workshop-body');
     if (!body) return;
     if (tab === 'materials') {
       const items = getMaterials();
-      if (!items.length) { body.innerHTML = '<div class="workshop-empty">还没有写作素材。<br>选中文章中的好句子，从浮动菜单存素材。</div>'; return; }
-      body.innerHTML = items.map((m, i) =>
+      let html = '<div class="workshop-action-bar"><button type="button" class="primary" id="ws-add-material">＋ 新建素材</button><span style="color:var(--text-muted);font-size:12px;">' + items.length + ' 条</span></div>';
+      if (!items.length) { html += '<div class="workshop-empty">还没有写作素材。<br>点上方"新建素材"，或选中文章句子后从浮动菜单存素材。</div>'; body.innerHTML = html; bindWsAddBtns(); return; }
+      html += items.map((m, i) =>
         '<div class="workshop-card">' +
         '<div class="workshop-card-head"><span>📝 ' + esc(m.topic || '素材') + '</span><button type="button" data-wdel="materials:' + i + '" class="workshop-del">✕</button></div>' +
         (m.source ? '<div class="workshop-source">「' + esc(m.source) + '」</div>' : '') +
@@ -1144,10 +1155,12 @@
         (m.logic ? '<div><b>逻辑：</b>' + esc(m.logic) + '</div>' : '') +
         '</div>'
       ).join('');
+      body.innerHTML = html; bindWsAddBtns();
     } else if (tab === 'advice') {
       const items = getCompositions().filter(x => x.articleId === articleId);
-      if (!items.length) { body.innerHTML = '<div class="workshop-empty">还没有建议文条目。</div>'; return; }
-      body.innerHTML = items.map((m) =>
+      let html = '<div class="workshop-action-bar"><button type="button" class="primary" id="ws-add-advice">＋ 新建建议文</button><span style="color:var(--text-muted);font-size:12px;">' + items.length + ' 条</span></div>';
+      if (!items.length) { html += '<div class="workshop-empty">还没有建议文条目。<br>点上方"新建建议文"添加。</div>'; body.innerHTML = html; bindWsAddBtns(); return; }
+      html += items.map((m) =>
         '<div class="workshop-card">' +
         '<div class="workshop-card-head"><span>🖊 ' + esc(m.theme || '条目') + '</span><button type="button" data-wdel="advice:' + m.id + '" class="workshop-del">✕</button></div>' +
         (m.point ? '<div><b>论点：</b>' + esc(m.point) + '</div>' : '') +
@@ -1155,20 +1168,24 @@
         (m.argue ? '<div><b>论述：</b>' + esc(m.argue) + '</div>' : '') +
         '</div>'
       ).join('');
+      body.innerHTML = html; bindWsAddBtns();
     } else if (tab === 'syntax') {
       const items = getSyntaxData();
-      if (!items.length) { body.innerHTML = '<div class="workshop-empty">还没有长难句记录。</div>'; return; }
-      body.innerHTML = items.map((m, i) =>
+      let html = '<div class="workshop-action-bar"><button type="button" class="primary" id="ws-add-syntax">＋ 新建长难句</button><span style="color:var(--text-muted);font-size:12px;">' + items.length + ' 条</span></div>';
+      if (!items.length) { html += '<div class="workshop-empty">还没有长难句记录。<br>点上方"新建长难句"，或选中句子后从浮动菜单存长难句。</div>'; body.innerHTML = html; bindWsAddBtns(); return; }
+      html += items.map((m, i) =>
         '<div class="workshop-card">' +
         '<div class="workshop-card-head"><span>🧩 句 ' + (i+1) + '</span><button type="button" data-wdel="syntax:' + i + '" class="workshop-del">✕</button></div>' +
         '<div class="workshop-source">' + (m.html ? m.html.replace(/<[^>]+>/g, '') : esc(m.text)) + '</div>' +
         (m.note ? '<div><b>笔记：</b>' + esc(m.note) + '</div>' : '') +
         '</div>'
       ).join('');
+      body.innerHTML = html; bindWsAddBtns();
     } else if (tab === 'roots') {
       const items = getRoots();
-      if (!items.length) { body.innerHTML = '<div class="workshop-empty">还没有词根记录。</div>'; return; }
-      body.innerHTML = items.map((m, i) =>
+      let html = '<div class="workshop-action-bar"><button type="button" class="primary" id="ws-add-root">＋ 新建词根</button><span style="color:var(--text-muted);font-size:12px;">' + items.length + ' 条</span></div>';
+      if (!items.length) { html += '<div class="workshop-empty">还没有词根记录。<br>点上方"新建词根"，或选中单词后从浮动菜单存词根。</div>'; body.innerHTML = html; bindWsAddBtns(); return; }
+      html += items.map((m, i) =>
         '<div class="workshop-card">' +
         '<div class="workshop-card-head"><span>🌱 ' + esc(m.root || m.word || '') + '</span><button type="button" data-wdel="roots:' + i + '" class="workshop-del">✕</button></div>' +
         '<div><b>类型：</b>' + esc(m.kind || '') + '</div>' +
@@ -1176,6 +1193,7 @@
         (m.examples ? '<div><b>例词：</b>' + esc(m.examples) + '</div>' : '') +
         '</div>'
       ).join('');
+      body.innerHTML = html; bindWsAddBtns();
     } else if (tab === 'notes') {
       const notes = getNotes();
       const activeId = body.dataset.activeNote || (notes.length ? notes[notes.length-1].id : '');
