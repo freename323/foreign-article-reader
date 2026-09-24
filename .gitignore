@@ -1,0 +1,50 @@
+# === 受版权保护的内容（不公开）===
+articles/
+articles_source/
+
+# 具体题目（基于受版权保护的文章，不公开）
+# 保留题库规范：_PROMPT_TEMPLATE.md, _ROOT_INDEX.md, _count_words.py
+questions/*/
+questions/_source/
+
+# === 用户个人数据 ===
+backups/
+*.json.bak
+reader-backup-*.json
+
+# === AI 工具内部目录 ===
+.mimosa/
+.qoder/
+.workspace-marker
+
+# === 旧 git 历史备份（含受版权保护的内容，不公开）===
+.git_backup/
+
+# === 测试和临时目录 ===
+.test/
+_cleanup/
+__pycache__/
+*.pyc
+*.lock.disabled
+
+# 文章截图（含受版权保护的内容）
+scripts/v4_shots/
+
+# === 编辑器 / OS ===
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+*.bak
+.vscode/
+.idea/
+
+# === 本地数据文件（用户自行生成）===
+_articles.json
+thesis.txt
+en_body.html
+cn_body.html
+
+# 包含具体文章引用的索引页（使用 index_template.html 作为模板）
+index.html

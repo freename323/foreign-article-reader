@@ -1,0 +1,18 @@
+[
+  {
+    "id": "sample_article",
+    "title": "示例文章：双语阅读器演示",
+    "title_cn": "Sample Article: Bilingual Reader Demo",
+    "source": "原创示例",
+    "date": "2026-01-01",
+    "author": "Demo",
+    "en_body": "examples/sample_en_body.html",
+    "cn_body": "examples/sample_cn_body.html",
+    "thesis": "这是一个示例文章，用于演示双语阅读器的功能。",
+    "paras": [
+      {"idx": 1, "en_summary": "打字练习句包含所有字母", "cn_summary": "敏捷的狐狸跳过懒狗"},
+      {"idx": 2, "en_summary": "阅读外刊有效提高语言能力", "cn_summary": "真实文本帮助掌握自然措辞"},
+      {"idx": 3, "en_summary": "平行栏双语阅读减少查词摩擦", "cn_summary": "并排比较保持阅读流畅性"}
+    ]
+  }
+]

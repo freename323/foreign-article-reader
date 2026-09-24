@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WSJ 对比阅读 / Compare Reader</title>
+<style>
+:root {
+  --bg: #fafaf7; --fg: #1a1a1a; --muted: #888; --rule: #d4d0c8;
+  --en-tag: #1a3a6c; --cn-tag: #b22222;
+  --toolbar-bg: #f0ede6; --toolbar-border: #ccc8be;
+  --bq-bg: #f5f3ed; --card-bg: #fff;
+  --font-base: 15px; --line-height: 1.75;
+}
+[data-theme="dark"] {
+  --bg: #16181c; --fg: #e8e6e1; --muted: #9a978f; --rule: #3a3d44;
+  --toolbar-bg: #1c1f24; --toolbar-border: #2c2f36;
+  --bq-bg: #1e2028; --card-bg: #1c1f24;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: "Source Serif Pro", "Noto Serif", "Times New Roman", "宋体", serif;
+  font-size: var(--font-base); line-height: var(--line-height);
+  display: flex; flex-direction: column;
+}
+
+/* Toolbar */
+.toolbar {
+  flex-shrink: 0;
+  background: var(--toolbar-bg); border-bottom: 1px solid var(--toolbar-border);
+  padding: 6px 16px; display: flex; gap: 6px; align-items: center;
+  font-family: -apple-system, sans-serif; font-size: 12px;
+}
+.toolbar .title { font-weight: 600; flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toolbar button {
+  background: transparent; border: 1px solid var(--rule); color: var(--fg);
+  padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; font-family: inherit;
+}
+.toolbar button:hover { background: var(--bq-bg); }
+.toolbar button.active { background: var(--en-tag); color: #fff; border-color: var(--en-tag); }
+.toolbar .sep { width: 1px; height: 18px; background: var(--rule); margin: 0 4px; }
+
+/* Main layout: two columns side by side */
+.main-wrap {
+  flex: 1; display: flex; overflow: hidden;
+}
+.article-pane {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+  border-right: 1px solid var(--rule);
+}
+.article-pane:last-child { border-right: none; }
+.pane-header {
+  flex-shrink: 0; padding: 10px 16px;
+  background: var(--bq-bg); border-bottom: 1px solid var(--rule);
+}
+.pane-header .pane-title { font-size: 14px; font-weight: 600; line-height: 1.3; }
+.pane-header .pane-cn { font-size: 13px; color: var(--cn-tag); }
+.pane-header .pane-author { font-size: 11px; color: var(--muted); font-family: -apple-system, sans-serif; }
+.pane-body {
+  flex: 1; overflow-y: auto; padding: 16px 20px;
+  font-size: var(--font-base); line-height: var(--line-height);
+}
+.pane-body p { margin-bottom: 0.8em; }
+.pane-body .para-label {
+  display: inline-block; font-family: -apple-system, sans-serif;
+  font-size: 10px; color: var(--muted); background: var(--bq-bg);
+  padding: 1px 6px; border-radius: 3px; margin-right: 6px;
+  vertical-align: top; font-weight: 600;
+}
+
+/* Sync highlight: matching paragraphs glow when hovered */
+.pane-body p.sync-hover { background: rgba(26,58,108,0.06); border-radius: 4px; }
+[data-theme="dark"] .pane-body p.sync-hover { background: rgba(100,140,200,0.1); }
+
+/* Notes panel (bottom) */
+.notes-panel {
+  flex-shrink: 0; height: 240px; overflow-y: auto;
+  background: var(--card-bg); border-top: 2px solid var(--en-tag);
+  padding: 12px 16px; display: none;
+  font-family: -apple-system, sans-serif; font-size: 13px;
+}
+.notes-panel.visible { display: block; }
+.notes-panel h3 { margin: 0 0 10px; font-size: 14px; font-family: "Source Serif Pro", serif; }
+.note-card {
+  background: var(--bq-bg); border-radius: 6px; padding: 8px 12px;
+  margin-bottom: 8px; border-left: 3px solid var(--en-tag);
+}
+.note-card.cn-note { border-left-color: var(--cn-tag); }
+.note-card .note-badge {
+  display: inline-block; font-size: 10px; padding: 1px 6px;
+  border-radius: 3px; margin-right: 6px; font-weight: 600;
+}
+.note-card .note-badge.vocab { background: #cfe2ff; color: #1a365d; }
+.note-card .note-badge.note { background: #d4f4dd; color: #1c4532; }
+.note-card .note-src { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.note-card .note-text { font-size: 13px; }
+.note-card .note-translation { font-size: 12px; color: var(--cn-tag); margin-top: 4px; }
+.empty-hint { color: var(--muted); text-align: center; padding: 30px; line-height: 1.8; }
+
+/* Paragraph alignment guide lines */
+.pane-body p[data-idx] { position: relative; }
+
+/* Responsive: stack on narrow screens */
+@media (max-width: 800px) {
+  .main-wrap { flex-direction: column; }
+  .article-pane { border-right: none; border-bottom: 1px solid var(--rule); max-height: 50%; }
+}
+</style>
+</head>
+<body>
+<div style="position:fixed;top:14px;right:20px;z-index:100;display:flex;gap:8px;">
+  <button onclick="goHome()" style="background:#2b6cb0;color:white;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:13px;">🏠 首页</button>
+</div>
+
+
+<div class="toolbar">
+  <span class="title" id="toolbar-title">对比阅读</span>
+  <button onclick="changeSize(-1)">A−</button>
+  <button onclick="changeSize(1)">A+</button>
+  <span class="sep"></span>
+  <button onclick="setTheme('light')">☀</button>
+  <button onclick="setTheme('dark')">🌙</button>
+  <span class="sep"></span>
+  <button onclick="toggleNotes()" id="toggle-notes-btn">📝 笔记</button>
+  <button onclick="toggleSync()" id="toggle-sync-btn" class="active">🔗 同步滚动</button>
+  <span class="sep"></span>
+  <button onclick="exportCompareMd()">⬇ MD</button>
+  <button onclick="goHub()">📚 文库</button>
+</div>
+
+<div class="main-wrap">
+  <div class="article-pane" id="pane-a">
+    <div class="pane-header" id="header-a"></div>
+    <div class="pane-body" id="body-a"></div>
+  </div>
+  <div class="article-pane" id="pane-b">
+    <div class="pane-header" id="header-b"></div>
+    <div class="pane-body" id="body-b"></div>
+  </div>
+</div>
+
+<div class="notes-panel" id="notes-panel">
+  <h3>📝 对比笔记 / Comparative Notes</h3>
+  <div id="notes-list"></div>
+</div>
+
+<script>
+(function() {
+  // ===== Parse query params =====
+  const params = new URLSearchParams(location.search);
+  const idA = params.get('a') || '';
+  const idB = params.get('b') || '';
+
+  function getArticle(id) {
+    try { return JSON.parse(localStorage.getItem('wsj_reader:article:' + id)); } catch(e) { return null; }
+  }
+  function getAnnotations(articleId) {
+    try { return JSON.parse(localStorage.getItem('annotations:' + articleId) || '[]'); } catch(e) { return []; }
+  }
+
+  const artA = getArticle(idA);
+  const artB = getArticle(idB);
+
+  if (!artA || !artB) {
+    document.body.innerHTML = '<div style="padding:40px;text-align:center;font-family:-apple-system,sans-serif;"><h2>无法加载文章</h2><p>请确保两篇文章都已打开过（注册到文库中）。</p><p>文章 A: ' + (artA ? '✓' : '✗ ' + idA) + '<br>文章 B: ' + (artB ? '✓' : '✗ ' + idB) + '</p><button onclick="location.href=\'WSJ_Hub.html\'" style="padding:8px 20px;cursor:pointer;">返回文库</button></div>';
+    return;
+  }
+
+  // ===== State =====
+  let syncScroll = true;
+  let fontSize = 15;
+  let notesVisible = false;
+  let compareNotes = [];
+  try { compareNotes = JSON.parse(localStorage.getItem('wsj_compare:notes') || '[]'); } catch(e) {}
+
+  // ===== Util =====
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+  // ===== Render =====
+  function renderPaneHeader(elId, art) {
+    document.getElementById(elId).innerHTML = `
+      <div class="pane-title">${esc(art.title)}</div>
+      <div class="pane-cn">${esc(art.cnTitle)}</div>
+      <div class="pane-author">${esc(art.author)} ${art.cnAuthor ? '/ ' + esc(art.cnAuthor) : ''}</div>
+    `;
+  }
+
+  function renderPaneBody(elId, art, side) {
+    const body = document.getElementById(elId);
+    let html = '';
+    const paras = art.enParas;
+    const cnParas = art.cnParas || [];
+    // Render EN paragraphs with CN translation below each
+    paras.forEach((p, i) => {
+      const cnP = cnParas.find(cp => cp.idx === p.idx);
+      html += `<p data-idx="${p.idx}" data-side="${side}">
+        <span class="para-label">P${p.idx}</span>
+        ${esc(p.text)}
+        ${cnP ? '<br><span style="color:var(--cn-tag);font-size:0.9em;">' + esc(cnP.text) + '</span>' : ''}
+      </p>`;
+    });
+    body.innerHTML = html;
+  }
+
+  function renderNotes() {
+    const list = document.getElementById('notes-list');
+    if (compareNotes.length === 0) {
+      list.innerHTML = '<div class="empty-hint">还没有对比笔记。<br><br>在下方输入框中添加笔记，<br>记录两篇文章的异同、观点对比等。</div>';
+      return;
+    }
+    const sorted = compareNotes.slice().sort((a, b) => a.createdAt < b.createdAt ? -1 : 1);
+    list.innerHTML = sorted.map(n => `
+      <div class="note-card ${n.side === 'cn' ? 'cn-note' : ''}">
+        <span class="note-badge ${n.type}">${n.type === 'vocab' ? '📖 生词' : n.type === 'note' ? '💡 笔记' : '🔀 对比'}</span>
+        <span class="note-src">${esc(n.articleTitle)} · ${n.paraIdx ? 'P' + n.paraIdx : ''}</span>
+        <div class="note-text">${esc(n.text)}</div>
+        ${n.note ? '<div class="note-translation">' + esc(n.note) + '</div>' : ''}
+        <button onclick="deleteCompareNote('${n.id}')" style="float:right;background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;">×</button>
+      </div>
+    `).join('');
+  }
+
+  // ===== Init =====
+  renderPaneHeader('header-a', artA);
+  renderPaneHeader('header-b', artB);
+  renderPaneBody('body-a', artA, 'a');
+  renderPaneBody('body-b', artB, 'b');
+  document.getElementById('toolbar-title').textContent = '对比: ' + artA.title + ' ⟷ ' + artB.title;
+  renderNotes();
+
+  // ===== Sync scroll =====
+  const bodyA = document.getElementById('body-a');
+  const bodyB = document.getElementById('body-b');
+  let syncing = false;
+
+  function syncScrollHandler(src, dst) {
+    if (!syncScroll || syncing) return;
+    syncing = true;
+    const pct = src.scrollTop / Math.max(1, src.scrollHeight - src.clientHeight);
+    dst.scrollTop = pct * (dst.scrollHeight - dst.clientHeight);
+    requestAnimationFrame(() => { syncing = false; });
+  }
+  bodyA.addEventListener('scroll', () => syncScrollHandler(bodyA, bodyB), { passive: true });
+  bodyB.addEventListener('scroll', () => syncScrollHandler(bodyB, bodyA), { passive: true });
+
+  // ===== Paragraph hover sync =====
+  document.querySelectorAll('.pane-body p[data-idx]').forEach(p => {
+    p.addEventListener('mouseenter', () => {
+      const idx = p.dataset.idx;
+      const side = p.dataset.side;
+      const otherSide = side === 'a' ? 'b' : 'a';
+      const other = document.querySelector(`.pane-body p[data-idx="${idx}"][data-side="${otherSide}"]`);
+      if (other) other.classList.add('sync-hover');
+    });
+    p.addEventListener('mouseleave', () => {
+      document.querySelectorAll('.pane-body p.sync-hover').forEach(el => el.classList.remove('sync-hover'));
+    });
+  });
+
+  // ===== Toolbar actions =====
+  window.changeSize = function(delta) {
+    fontSize = Math.max(12, Math.min(22, fontSize + delta));
+    document.documentElement.style.setProperty('--font-base', fontSize + 'px');
+  };
+  window.setTheme = function(t) {
+    if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.removeAttribute('data-theme');
+    try { localStorage.setItem('wsj_compare:theme', t); } catch(e) {}
+  };
+  try { window.setTheme(localStorage.getItem('wsj_compare:theme') || 'light'); } catch(e) {}
+  window.toggleSync = function() {
+    syncScroll = !syncScroll;
+    document.getElementById('toggle-sync-btn').classList.toggle('active', syncScroll);
+  };
+  window.toggleNotes = function() {
+    notesVisible = !notesVisible;
+    document.getElementById('notes-panel')?.classList.toggle('visible', notesVisible);
+    document.getElementById('toggle-notes-btn').classList.toggle('active', notesVisible);
+  };
+  window.goHub = function() { location.href = 'WSJ_Hub.html'; };
+window.goHome = function() { location.href = '../articles/index.html'; };
+
+  window.deleteCompareNote = function(id) {
+    compareNotes = compareNotes.filter(n => n.id !== id);
+    localStorage.setItem('wsj_compare:notes', JSON.stringify(compareNotes));
+    renderNotes();
+  };
+
+  window.exportCompareMd = function() {
+    let md = '# 对比阅读\n\n';
+    md += '## 文章 A: ' + artA.title + '\n';
+    md += '**' + artA.author + '**\n\n';
+    md += '## 文章 B: ' + artB.title + '\n';
+    md += '**' + artB.author + '**\n\n';
+    md += '## 逐段对比\n\n';
+    const maxParas = Math.max(artA.enParas.length, artB.enParas.length);
+    for (let i = 1; i <= maxParas; i++) {
+      const pA = artA.enParas.find(p => p.idx === i);
+      const pB = artB.enParas.find(p => p.idx === i);
+      md += '### P' + i + '\n';
+      if (pA) md += '**A:** ' + pA.text + '\n\n';
+      if (pB) md += '**B:** ' + pB.text + '\n\n';
+      const cnA = (artA.cnParas || []).find(p => p.idx === i);
+      const cnB = (artB.cnParas || []).find(p => p.idx === i);
+      if (cnA) md += '> A译: ' + cnA.text + '\n\n';
+      if (cnB) md += '> B译: ' + cnB.text + '\n\n';
+    }
+    if (compareNotes.length) {
+      md += '## 对比笔记\n\n';
+      compareNotes.forEach(n => {
+        md += '- [' + n.type + '] ' + n.articleTitle + ': ' + n.text;
+        if (n.note) md += ' — ' + n.note;
+        md += '\n';
+      });
+    }
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'Compare - ' + artA.title.slice(0, 30) + ' vs ' + artB.title.slice(0, 30) + '.md';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  // ===== Add compare note via keyboard shortcut =====
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'Enter') {
+      const text = prompt('添加对比笔记：');
+      if (text && text.trim()) {
+        compareNotes.push({
+          id: Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+          type: 'compare',
+          text: text.trim(),
+          note: '',
+          articleTitle: artA.title + ' vs ' + artB.title,
+          paraIdx: '',
+          createdAt: new Date().toISOString()
+        });
+        localStorage.setItem('wsj_compare:notes', JSON.stringify(compareNotes));
+        if (!notesVisible) toggleNotes();
+        renderNotes();
+      }
+    }
+  });
+
+  // ===== Context menu: right-click paragraph to annotate =====
+  document.querySelectorAll('.pane-body p[data-idx]').forEach(p => {
+    p.addEventListener('contextmenu', (e) => {
+      // Only if not selecting text
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) return;
+      e.preventDefault();
+      const side = p.dataset.side;
+      const idx = p.dataset.idx;
+      const art = side === 'a' ? artA : artB;
+      const note = prompt('为 ' + (side === 'a' ? 'A' : 'B') + ' P' + idx + ' 添加笔记：');
+      if (note && note.trim()) {
+        compareNotes.push({
+          id: Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+          type: 'note',
+          text: art.enParas.find(pp => pp.idx == idx)?.text?.slice(0, 80) + '…',
+          note: note.trim(),
+          articleTitle: art.title,
+          paraIdx: idx,
+          createdAt: new Date().toISOString()
+        });
+        localStorage.setItem('wsj_compare:notes', JSON.stringify(compareNotes));
+        if (!notesVisible) toggleNotes();
+        renderNotes();
+      }
+    });
+  });
+
+})();
+</script>
+</body>
+</html>

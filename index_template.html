@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>外刊阅读器 · Foreign Article Reader</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(135deg, #fef9e7 0%, #fdf6e3 100%);
+    color: #2c3e50;
+    min-height: 100vh;
+  }
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 60px 24px 80px;
+  }
+  header {
+    text-align: center;
+    margin-bottom: 48px;
+  }
+  h1 {
+    font-size: 44px; margin: 0 0 12px;
+    color: #1a365d;
+    font-weight: 700;
+  }
+  .subtitle {
+    font-size: 18px; color: #5a6c7d;
+    margin: 0 0 8px;
+  }
+  .tagline {
+    display: inline-block;
+    background: #cfe2ff; color: #1a365d;
+    padding: 4px 12px; border-radius: 12px;
+    font-size: 12px; font-weight: 600;
+    margin-top: 16px;
+  }
+  .setup-box {
+    background: white;
+    border-radius: 12px;
+    padding: 32px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    margin-bottom: 32px;
+  }
+  .setup-box h2 {
+    margin: 0 0 16px;
+    color: #1a365d;
+    font-size: 22px;
+  }
+  .setup-box ol {
+    margin: 0;
+    padding-left: 20px;
+    line-height: 1.8;
+  }
+  .setup-box code {
+    background: #f0f4f8;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  .features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+  }
+  .feature {
+    background: white;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+  }
+  .feature h3 {
+    margin: 0 0 8px;
+    color: #2c5282;
+    font-size: 16px;
+  }
+  .feature p {
+    margin: 0;
+    color: #5a6c7d;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  footer {
+    text-align: center;
+    margin-top: 48px;
+    color: #95a5a6;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>外刊阅读器</h1>
+    <p class="subtitle">Foreign Article Reader · 双语对照 + 考研英语练习</p>
+    <span class="tagline">纯前端 · 离线可用 · 零依赖</span>
+  </header>
+
+  <div class="setup-box">
+    <h2>快速开始</h2>
+    <ol>
+      <li>准备文章原文（EN）和翻译（CN），保存为 HTML 段落文件（参考 <code>examples/</code> 目录）</li>
+      <li>编辑 <code>_articles.json</code>，填入文章元数据和段落摘要（参考 <code>examples/_articles.sample.json</code>）</li>
+      <li>运行构建：<code>python scripts/concat_reader.py &amp;&amp; python scripts/build_html.py --data _articles.json --out-dir articles/</code></li>
+      <li>或使用 PowerShell：<code>.\build.ps1 all</code></li>
+      <li>用浏览器打开生成的 <code>articles/&lt;article&gt;_EN-CN_final.html</code> 开始阅读</li>
+    </ol>
+  </div>
+
+  <div class="features">
+    <div class="feature">
+      <h3>三列双语阅读</h3>
+      <p>EN 原文 | 双语摘要 | CN 翻译，段落级滚动同步，可编辑翻译和摘要</p>
+    </div>
+    <div class="feature">
+      <h3>标注与笔记</h3>
+      <p>选中文本记生词/标不懂/加备注，三色高亮，笔记面板支持搜索</p>
+    </div>
+    <div class="feature">
+      <h3>考研英语集成</h3>
+      <p>6 大题型模拟考试，考试/练习双模式，答题卡+成绩趋势+错题本</p>
+    </div>
+    <div class="feature">
+      <h3>词频分析</h3>
+      <p>5 级词频着色，词汇浏览器，词根联想，生词 CSV 导出（Anki 兼容）</p>
+    </div>
+    <div class="feature">
+      <h3>数据本地存储</h3>
+      <p>所有数据存浏览器 localStorage，支持备份/恢复，纯离线无网络请求</p>
+    </div>
+    <div class="feature">
+      <h3>个性化</h3>
+      <p>4 套主题，字号调节，阅读计时，进度追踪，移动端适配</p>
+    </div>
+  </div>
+
+  <footer>
+    <p>MIT License · 框架开源，文章内容请自行准备并确保拥有合法使用权</p>
+  </footer>
+</div>
+</body>
+</html>
