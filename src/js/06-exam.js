@@ -10,12 +10,20 @@
   const closeAllMenus = R.closeAllMenus || (() => {});
   const showTopToast = R.showTopToast || ((m) => console.log(m));
   const getShortTitle = R.getShortTitle || (() => 'article');
-  let annotations = R.annotations || [];
+  // v29: IIFE 内 annotations / activeTagFilters 直接使用 R 上的引用，确保 .push / .splice
+  // 写操作能立即反映到 reader.js 顶层（saveAnnotations 写 localStorage 时能包含新数据）
+  // settings / qTypeFilter / qMasteryFilter / noteSearchQuery 是 scalar，用 syncToR() 同步
+  let annotations = R.annotations || (R.annotations = []);
+  let activeTagFilters = R.activeTagFilters || (R.activeTagFilters = []);
   let settings = R.settings || {};
   let qTypeFilter = R.qTypeFilter || 'all';
   let qMasteryFilter = R.qMasteryFilter || 'all';
-  let activeTagFilters = R.activeTagFilters || [];
   let noteSearchQuery = R.noteSearchQuery || '';
+  function syncToR() {
+    if (R.qTypeFilter !== qTypeFilter) R.qTypeFilter = qTypeFilter;
+    if (R.qMasteryFilter !== qMasteryFilter) R.qMasteryFilter = qMasteryFilter;
+    if (R.noteSearchQuery !== noteSearchQuery) R.noteSearchQuery = noteSearchQuery;
+  }
   // showTopToast / getShortTitle moved to 00-head.js
 
   // ===== Exam prep FEATURE 1: Question-type annotations =====
@@ -100,6 +108,7 @@
       html += `<button type="button" class="tag-filter-chip${activeTagFilters.indexOf(t) >= 0 ? ' active' : ''}" data-tag-filter="${esc(t)}">${esc(t)}</button>`;
     });
     if (activeTagFilters.length > 0) html += '<button type="button" class="tag-filter-clear" data-tag-filter-clear>清除</button>';
+    syncToR();
     html += '</div>';
     return html;
   }
@@ -192,9 +201,11 @@
       context: context || '',
       createdAt: new Date().toISOString()
     };
+    // v29: annotations 现在是 R.annotations 的引用，.push 后 saveAnnotations 正确写入 localStorage
     annotations.push(ann);
     saveAnnotations();
     updateNoteCount();
+    if (R.renderNotes) R.renderNotes();
     showTopToast('已标注');
     // Reveal it in the 题型 tab
     settings.showNotes = true; saveSettings();
@@ -286,6 +297,7 @@
   function renderQtypeFilterRow(qanns) {
     // Prune a stale type filter (that type no longer has any items)
     if (qTypeFilter !== 'all' && !qanns.some(a => a.qtype === qTypeFilter)) qTypeFilter = 'all';
+    syncToR();
     const mChips = [
       { key: 'all', label: '全部' },
       { key: 'wrong', label: '✗ 做错' },
@@ -437,10 +449,10 @@
     });
     // Filter chips: mastery + type (combined dimensions)
     scope.querySelectorAll('[data-qmfilter]').forEach(btn => {
-      btn.addEventListener('click', () => { qMasteryFilter = btn.dataset.qmfilter; renderNotes(); });
+      btn.addEventListener('click', () => { qMasteryFilter = btn.dataset.qmfilter; syncToR(); renderNotes(); });
     });
     scope.querySelectorAll('[data-qtfilter]').forEach(btn => {
-      btn.addEventListener('click', () => { qTypeFilter = btn.dataset.qtfilter; renderNotes(); });
+      btn.addEventListener('click', () => { qTypeFilter = btn.dataset.qtfilter; syncToR(); renderNotes(); });
     });
     // Export 错题本
     scope.querySelectorAll('[data-export-qtype]').forEach(btn => {
