@@ -1,23 +1,22 @@
-  // ===== Exam prep: shared helpers =====
-  function showTopToast(msg, ms) {
-    let t = document.getElementById('exam-toast');
-    if (!t) {
-      t = document.createElement('div');
-      t.id = 'exam-toast';
-      t.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:8px 18px;border-radius:6px;font-size:13px;z-index:99999;opacity:0;transition:opacity .3s;pointer-events:none;font-family:-apple-system,sans-serif;max-width:80vw;text-align:center;white-space:pre-line;';
-      document.body.appendChild(t);
-    }
-    t.textContent = msg;
-    t.style.opacity = '1';
-    clearTimeout(t._timer);
-    t._timer = setTimeout(() => { t.style.opacity = '0'; }, ms || 2000);
-  }
-  function getShortTitle() {
-    const h1 = document.querySelector('.title-block h1:not(.cn)');
-    let t = h1 ? h1.textContent.trim() : 'article';
-    if (t.length > 40) t = t.slice(0, 40) + '…';
-    return t;
-  }
+﻿(function () {
+  // Bridge to reader.js IIFE scope
+  const R = window.__reader || {};
+  const esc = R.esc || (s => String(s == null ? '' : s));
+  const genId = R.genId || (() => Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+  const articleId = R.articleId || 'article';
+  const saveAnnotations = R.saveAnnotations || (() => {});
+  const renderNotes = R.renderNotes || (() => {});
+  const saveSettings = R.saveSettings || (() => {});
+  const closeAllMenus = R.closeAllMenus || (() => {});
+  const showTopToast = R.showTopToast || ((m) => console.log(m));
+  const getShortTitle = R.getShortTitle || (() => 'article');
+  let annotations = R.annotations || [];
+  let settings = R.settings || {};
+  let qTypeFilter = R.qTypeFilter || 'all';
+  let qMasteryFilter = R.qMasteryFilter || 'all';
+  let activeTagFilters = R.activeTagFilters || [];
+  let noteSearchQuery = R.noteSearchQuery || '';
+  // showTopToast / getShortTitle moved to 00-head.js
 
   // ===== Exam prep FEATURE 1: Question-type annotations =====
   const QTYPE_META = {
@@ -517,13 +516,37 @@
   }
 
   // ===== Exam prep FEATURE 2: Sentence syntax analysis =====
+  let _syntaxAutoId = null;
   function openSyntaxPanel(text) {
     const panel = document.getElementById('syntax-panel');
     if (!panel) return;
     document.getElementById('syntax-text').textContent = text || '';
     document.getElementById('syntax-note').value = '';
     resetStructRows();
+    // Create record immediately so it auto-saves on blur
+    const plain = (text || '').trim();
+    if (plain) {
+      _syntaxAutoId = genId();
+      const key = 'syntax:' + articleId;
+      let arr = [];
+      try { arr = JSON.parse(localStorage.getItem(key)) || []; } catch(e) {}
+      arr.push({ id: _syntaxAutoId, text: plain, html: document.getElementById('syntax-text').innerHTML, note: '', structure: collectStructRows(), createdAt: new Date().toISOString() });
+      try { localStorage.setItem(key, JSON.stringify(arr)); } catch(e) {}
+    }
     panel.classList.add('visible');
+    // Auto-save on blur
+    const noteEl = document.getElementById('syntax-note');
+    if (noteEl && !noteEl.dataset.bound) {
+      noteEl.dataset.bound = '1';
+      noteEl.addEventListener('blur', () => {
+        if (!_syntaxAutoId) return;
+        const key = 'syntax:' + articleId;
+        let arr = [];
+        try { arr = JSON.parse(localStorage.getItem(key)) || []; } catch(e) {}
+        const rec = arr.find(x => x.id === _syntaxAutoId);
+        if (rec) { rec.note = noteEl.value.trim(); try { localStorage.setItem(key, JSON.stringify(arr)); } catch(e) {} }
+      });
+    }
   }
   function closeSyntaxPanel() {
     const panel = document.getElementById('syntax-panel');
@@ -782,13 +805,47 @@
     panel.querySelectorAll('.material-type-btn').forEach(b => b.classList.toggle('active', b.dataset.mtype === t));
     panel.querySelectorAll('.material-type-group').forEach(g => { g.style.display = (g.dataset.mtypeGroup === t) ? '' : 'none'; });
   }
+  let _materialAutoId = null;
   function openMaterialPanel(text) {
     const panel = document.getElementById('material-panel');
     if (!panel) return;
     document.getElementById('material-source').textContent = text || '';
     panel.querySelectorAll('input, textarea').forEach(el => { el.value = ''; });
     setMaterialType('fact'); // default type
+    // Create record immediately
+    _materialAutoId = genId();
+    const key = 'wsj_writing:materials';
+    let arr = [];
+    try { arr = JSON.parse(localStorage.getItem(key)) || []; } catch(e) {}
+    arr.push({ id: _materialAutoId, sourceText: (text||'').trim(), articleId: articleId, materialType: 'fact', topic: '', usedCount: 0, lastUsedAt: null, createdAt: new Date().toISOString() });
+    try { localStorage.setItem(key, JSON.stringify(arr)); } catch(e) {}
     panel.classList.add('visible');
+    // Auto-save on blur of any field
+    panel.querySelectorAll('input, textarea').forEach(el => {
+      if (el.dataset.boundMat) return;
+      el.dataset.boundMat = '1';
+      el.addEventListener('blur', () => {
+        if (!_materialAutoId) return;
+        const key = 'wsj_writing:materials';
+        let arr = [];
+        try { arr = JSON.parse(localStorage.getItem(key)) || []; } catch(e) {}
+        const rec = arr.find(x => x.id === _materialAutoId);
+        if (!rec) return;
+        const topicEl = document.getElementById('material-topic');
+        rec.topic = normalizeTopicTags(topicEl ? topicEl.value : '');
+        rec.materialType = materialType;
+        (MATERIAL_TYPE_FIELDS[materialType] || []).forEach(f => {
+          const fld = panel.querySelector('[data-mfield="' + f.key + '"]');
+          const v = fld ? fld.value.trim() : '';
+          if (v) rec[f.key] = v; else delete rec[f.key];
+        });
+        const usageEl = document.getElementById('material-usage');
+        if (usageEl && usageEl.value.trim()) rec.usage = usageEl.value.trim(); else delete rec.usage;
+        const tplEl = document.getElementById('material-template');
+        if (tplEl && tplEl.value.trim()) rec.template = tplEl.value.trim(); else delete rec.template;
+        try { localStorage.setItem(key, JSON.stringify(arr)); } catch(e) {}
+      });
+    });
   }
   function closeMaterialPanel() {
     const panel = document.getElementById('material-panel');
@@ -862,6 +919,30 @@
     panel.dataset.editId = '';
     panel.classList.add('visible');
     setTimeout(() => document.getElementById('root-meaning').focus(), 60);
+    // Auto-save on blur of meaning/examples
+    ['root-meaning', 'root-examples'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && !el.dataset.boundRoot) {
+        el.dataset.boundRoot = '1';
+        el.addEventListener('blur', () => {
+          const rootEl = document.getElementById('root-word');
+          const root = (rootEl.value || '').trim();
+          if (!root) return;
+          const key = 'wsj_roots:cards';
+          let arr = [];
+          try { arr = JSON.parse(localStorage.getItem(key)) || []; } catch(e) {}
+          const norm = root.toLowerCase();
+          let card = arr.find(c => String(c.root || '').trim().toLowerCase() === norm);
+          if (!card) {
+            card = { id: genId(), root: root, kind: document.getElementById('root-kind').value, meaning: '', examples: '', source: getShortTitle(), createdAt: new Date().toISOString() };
+            arr.push(card);
+          }
+          card.meaning = document.getElementById('root-meaning').value.trim();
+          card.examples = document.getElementById('root-examples').value.trim();
+          try { localStorage.setItem(key, JSON.stringify(arr)); } catch(e) {}
+        });
+      }
+    });
   }
   function closeRootPanel() {
     const panel = document.getElementById('root-panel');
@@ -988,3 +1069,254 @@
       ta.addEventListener('blur', () => flushComposeEdits());
     });
   }
+
+  // ===== Writing Workshop: unified panel for all writing-related collections =====
+  function openWritingWorkshop(tab) {
+    let panel = document.getElementById('writing-workshop');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'writing-workshop';
+      panel.className = 'syntax-panel writing-workshop';
+      panel.innerHTML =
+        '<div class="syntax-header"><h3>✍️ 写作工坊</h3><button type="button" data-close="1" title="关闭">✕</button></div>' +
+        '<div class="workshop-tabs">' +
+        '<button class="workshop-tab active" data-wtab="all">📋 全部</button>' +
+        '<button class="workshop-tab" data-wtab="materials">📝 素材</button>' +
+        '<button class="workshop-tab" data-wtab="advice">🖊 建议文</button>' +
+        '<button class="workshop-tab" data-wtab="syntax">🧩 长难句</button>' +
+        '<button class="workshop-tab" data-wtab="roots">🌱 词根</button>' +
+        '<button class="workshop-tab" data-wtab="notes">✏️ 笔记</button>' +
+        '</div>' +
+        '<div class="workshop-body" id="workshop-body"></div>' +
+        '<div class="syntax-actions"><button type="button" data-close="1">关闭</button></div>';
+      document.body.appendChild(panel);
+      panel.querySelector('[data-close]').addEventListener('click', () => panel.classList.remove('visible'));
+      panel.querySelectorAll('.workshop-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+          panel.querySelectorAll('.workshop-tab').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          renderWorkshopBody(btn.dataset.wtab);
+        });
+      });
+    }
+    if (tab) {
+      const btn = panel.querySelector('.workshop-tab[data-wtab="' + tab + '"]');
+      if (btn) btn.click();
+    } else {
+      renderWorkshopBody(panel.querySelector('.workshop-tab.active').dataset.wtab);
+    }
+    panel.classList.add('visible');
+  }
+  function getMaterials() {
+    try { return JSON.parse(localStorage.getItem('wsj_writing:materials')) || []; } catch(e) { return []; }
+  }
+  function getSyntaxData() {
+    try { return JSON.parse(localStorage.getItem('syntax:' + articleId)) || []; } catch(e) { return []; }
+  }
+  function getRoots() {
+    try { return JSON.parse(localStorage.getItem('wsj_roots:cards')) || []; } catch(e) { return []; }
+  }
+  function renderWorkshopBody(tab) {
+    const body = document.getElementById('workshop-body');
+    if (!body) return;
+    if (tab === 'materials') {
+      const items = getMaterials();
+      if (!items.length) { body.innerHTML = '<div class="workshop-empty">还没有写作素材。<br>选中文章中的好句子，从浮动菜单存素材。</div>'; return; }
+      body.innerHTML = items.map((m, i) =>
+        '<div class="workshop-card">' +
+        '<div class="workshop-card-head"><span>📝 ' + esc(m.topic || '素材') + '</span><button type="button" data-wdel="materials:' + i + '" class="workshop-del">✕</button></div>' +
+        (m.source ? '<div class="workshop-source">「' + esc(m.source) + '」</div>' : '') +
+        (m.cause ? '<div><b>起因：</b>' + esc(m.cause) + '</div>' : '') +
+        (m.process ? '<div><b>经过：</b>' + esc(m.process) + '</div>' : '') +
+        (m.develop ? '<div><b>发展：</b>' + esc(m.develop) + '</div>' : '') +
+        (m.logic ? '<div><b>逻辑：</b>' + esc(m.logic) + '</div>' : '') +
+        '</div>'
+      ).join('');
+    } else if (tab === 'advice') {
+      const items = getCompositions().filter(x => x.articleId === articleId);
+      if (!items.length) { body.innerHTML = '<div class="workshop-empty">还没有建议文条目。</div>'; return; }
+      body.innerHTML = items.map((m) =>
+        '<div class="workshop-card">' +
+        '<div class="workshop-card-head"><span>🖊 ' + esc(m.theme || '条目') + '</span><button type="button" data-wdel="advice:' + m.id + '" class="workshop-del">✕</button></div>' +
+        (m.point ? '<div><b>论点：</b>' + esc(m.point) + '</div>' : '') +
+        (m.advice ? '<div><b>建议：</b>' + esc(m.advice) + '</div>' : '') +
+        (m.argue ? '<div><b>论述：</b>' + esc(m.argue) + '</div>' : '') +
+        '</div>'
+      ).join('');
+    } else if (tab === 'syntax') {
+      const items = getSyntaxData();
+      if (!items.length) { body.innerHTML = '<div class="workshop-empty">还没有长难句记录。</div>'; return; }
+      body.innerHTML = items.map((m, i) =>
+        '<div class="workshop-card">' +
+        '<div class="workshop-card-head"><span>🧩 句 ' + (i+1) + '</span><button type="button" data-wdel="syntax:' + i + '" class="workshop-del">✕</button></div>' +
+        '<div class="workshop-source">' + (m.html ? m.html.replace(/<[^>]+>/g, '') : esc(m.text)) + '</div>' +
+        (m.note ? '<div><b>笔记：</b>' + esc(m.note) + '</div>' : '') +
+        '</div>'
+      ).join('');
+    } else if (tab === 'roots') {
+      const items = getRoots();
+      if (!items.length) { body.innerHTML = '<div class="workshop-empty">还没有词根记录。</div>'; return; }
+      body.innerHTML = items.map((m, i) =>
+        '<div class="workshop-card">' +
+        '<div class="workshop-card-head"><span>🌱 ' + esc(m.root || m.word || '') + '</span><button type="button" data-wdel="roots:' + i + '" class="workshop-del">✕</button></div>' +
+        '<div><b>类型：</b>' + esc(m.kind || '') + '</div>' +
+        (m.meaning ? '<div><b>含义：</b>' + esc(m.meaning) + '</div>' : '') +
+        (m.examples ? '<div><b>例词：</b>' + esc(m.examples) + '</div>' : '') +
+        '</div>'
+      ).join('');
+    } else if (tab === 'notes') {
+      const notes = getNotes();
+      const activeId = body.dataset.activeNote || (notes.length ? notes[notes.length-1].id : '');
+      const active = notes.find(n => n.id === activeId);
+      let html = '<div class="notes-layout">';
+      // Left: note list
+      html += '<div class="notes-list-pane">';
+      html += '<button type="button" id="note-add-btn" class="primary" style="width:100%;padding:6px;margin-bottom:8px;">＋ 新建笔记</button>';
+      if (!notes.length) {
+        html += '<div class="workshop-empty">还没有笔记。</div>';
+      } else {
+        html += notes.slice().reverse().map(n =>
+          '<div class="note-list-item' + (n.id === activeId ? ' active' : '') + '" data-note-id="' + n.id + '">' +
+          '<div class="note-list-title">' + esc(n.title || '未命名') + '</div>' +
+          '<div class="note-list-meta">' + (n.updatedAt ? new Date(n.updatedAt).toLocaleDateString() : '') + '</div>' +
+          '</div>'
+        ).join('');
+      }
+      html += '</div>';
+      // Right: editor
+      html += '<div class="notes-editor-pane">';
+      if (active) {
+        const verCount = (active.versions || []).length;
+        html += '<div class="note-editor-head">' +
+          '<input type="text" id="note-title-input" value="' + esc(active.title || '') + '" placeholder="笔记标题" style="width:100%;font-size:16px;font-weight:600;border:1px solid var(--border);border-radius:6px;padding:6px 8px;background:var(--panel-bg);color:var(--text);">' +
+          '<div style="display:flex;gap:8px;align-items:center;margin-top:4px;font-size:12px;color:var(--text-muted);">' +
+          '<span id="note-save-status">已自动保存</span>' +
+          (verCount > 0 ? '<button type="button" id="note-history-btn" style="font-size:12px;background:none;border:1px solid var(--border);border-radius:4px;padding:2px 8px;cursor:pointer;">🕘 历史 (' + verCount + ')</button>' : '') +
+          '</div>' +
+          '</div>';
+        html += '<textarea id="note-content-input" placeholder="开始写…自动保存" style="width:100%;height:300px;margin-top:8px;border:1px solid var(--border);border-radius:6px;padding:8px;background:var(--panel-bg);color:var(--text);font-size:14px;line-height:1.7;resize:vertical;">' + esc(active.content || '') + '</textarea>';
+        html += '<div id="note-history-panel" style="display:none;margin-top:8px;border:1px solid var(--border);border-radius:6px;padding:8px;max-height:200px;overflow-y:auto;"></div>';
+      } else {
+        html += '<div class="workshop-empty">选左侧笔记开始编辑，或新建一条。</div>';
+      }
+      html += '</div></div>';
+      body.innerHTML = html;
+      body.dataset.activeNote = activeId;
+      // New note button
+      document.getElementById('note-add-btn').addEventListener('click', () => {
+        const notes = getNotes();
+        const n = { id: genId(), title: '', content: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), versions: [] };
+        notes.push(n);
+        saveNotes(notes);
+        body.dataset.activeNote = n.id;
+        renderWorkshopBody('notes');
+      });
+      // Note list click
+      body.querySelectorAll('.note-list-item').forEach(el => {
+        el.addEventListener('click', () => { body.dataset.activeNote = el.dataset.noteId; renderWorkshopBody('notes'); });
+      });
+      // Auto-save with debounce
+      const titleInput = document.getElementById('note-title-input');
+      const contentInput = document.getElementById('note-content-input');
+      let saveTimer = null;
+      function autoSave() {
+        const status = document.getElementById('note-save-status');
+        if (status) status.textContent = '保存中…';
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => {
+          const notes = getNotes();
+          const n = notes.find(x => x.id === activeId);
+          if (!n) return;
+          // Push old version to history (only if content changed)
+          if (n.content !== contentInput.value || n.title !== titleInput.value) {
+            n.versions = n.versions || [];
+            n.versions.push({ title: n.title, content: n.content, savedAt: n.updatedAt });
+            if (n.versions.length > 10) n.versions = n.versions.slice(-10);
+          }
+          n.title = titleInput.value.trim();
+          n.content = contentInput.value;
+          n.updatedAt = new Date().toISOString();
+          saveNotes(notes);
+          if (status) status.textContent = '✓ 已自动保存 ' + new Date().toLocaleTimeString();
+        }, 800);
+      }
+      if (titleInput) titleInput.addEventListener('input', autoSave);
+      if (contentInput) contentInput.addEventListener('input', autoSave);
+      // History button
+      const histBtn = document.getElementById('note-history-btn');
+      if (histBtn) histBtn.addEventListener('click', () => {
+        const panel = document.getElementById('note-history-panel');
+        if (panel.style.display === 'none') {
+          const notes = getNotes();
+          const n = notes.find(x => x.id === activeId);
+          if (n && n.versions) {
+            panel.innerHTML = '<div style="font-weight:600;margin-bottom:4px;">历史版本（最近10次）</div>' +
+              n.versions.slice().reverse().map((v, i) =>
+                '<div style="border-bottom:1px solid var(--border);padding:4px 0;cursor:pointer;" data-restore="' + i + '">' +
+                '<div style="font-size:12px;color:var(--text-muted);">' + new Date(v.savedAt).toLocaleString() + '</div>' +
+                '<div style="font-size:13px;">' + esc((v.title || '未命名')) + '</div>' +
+                '</div>'
+              ).join('');
+            panel.querySelectorAll('[data-restore]').forEach(el => {
+              el.addEventListener('click', () => {
+                const v = n.versions[n.versions.length - 1 - Number(el.dataset.restore)];
+                if (!v) return;
+                if (!confirm('恢复此版本？当前内容会被覆盖（但当前内容也会保留在历史里）')) return;
+                titleInput.value = v.title || '';
+                contentInput.value = v.content || '';
+                autoSave();
+                panel.style.display = 'none';
+              });
+            });
+          }
+          panel.style.display = 'block';
+        } else {
+          panel.style.display = 'none';
+        }
+      });
+    }
+    body.querySelectorAll('[data-wdel]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const parts = btn.dataset.wdel.split(':');
+        const type = parts[0], idx = parts[1];
+        if (type === 'materials') {
+          const arr = getMaterials(); arr.splice(Number(idx), 1);
+          localStorage.setItem('wsj_writing:materials', JSON.stringify(arr));
+        } else if (type === 'advice') {
+          const arr = getCompositions().filter(x => x.id !== idx);
+          saveCompositions(arr);
+        } else if (type === 'syntax') {
+          const arr = getSyntaxData(); arr.splice(Number(idx), 1);
+          localStorage.setItem('syntax:' + articleId, JSON.stringify(arr));
+        } else if (type === 'roots') {
+          const arr = getRoots(); arr.splice(Number(idx), 1);
+          localStorage.setItem('wsj_roots:cards', JSON.stringify(arr));
+        }
+        showTopToast('已删除');
+        renderWorkshopBody(tab);
+      });
+    });
+  }
+  // ===== Expose to reader.js via window.__exam =====
+  // (qTypeFilter / qMasteryFilter / activeTagFilters are already defined as getters/setters
+  // on window.__reader inside reader.js IIFE — redefining here would silently no-op in
+  // non-strict mode. Filter state stays owned by 03-notes.js and is read directly via
+  // window.__reader getter if needed.)
+
+  window.__exam = {
+    QTYPE_ORDER, QTYPE_META,
+    openSyntaxPanel, closeSyntaxPanel, saveSyntax,
+    setupSyntaxPanel, upgradeSyntaxPanel,
+    openMaterialPanel, closeMaterialPanel, saveMaterial, upgradeMaterialPanel, setMaterialType,
+    recordRoot, openRootPanel, closeRootPanel, saveRootCard,
+    openComposePanel, closeComposePanel,
+    openWritingWorkshop,
+    renderQtypeList, renderQtypeCard, renderQtypeFilterRow,
+    wireQtypeInteractions, addQtypeAnnotation,
+    exportQtype, recomputeCorrect,
+    annTags, addAnnotationTag, removeAnnotationTag,
+    wireTagInteractions, renderTagRow, renderTagFilterRow,
+    // Shared filter predicates (used by getFilteredSorted in 03-notes.js and elsewhere)
+    matchesAllFilters, matchesTagFilter, matchesQFilter, matchesNoteSearch,
+  };
+})();

@@ -61,7 +61,7 @@
         const where = a.source === 'cn'
           ? `第${a.paraIdx}段第${a.line}行`
           : `EN p${a.paraIdx} L${a.line}`;
-        const typeLabel = a.type || (a.bucket === 'qtype' ? ((QTYPE_META[a.qtype] || {}).label || '题型') : 'note');
+        const typeLabel = a.type || (a.bucket === 'qtype' ? (((window.__exam && window.__exam.QTYPE_META) || {})[a.qtype] || {}).label || '题型' : 'note');
         lines.push(`- **${where}** [${typeLabel}] ${a.text}`);
         if (a.note) lines.push(`  - Note: ${a.note}`);
         if (a.context) lines.push(`  - Context: ${a.context}`);

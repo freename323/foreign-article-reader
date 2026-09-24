@@ -1,4 +1,4 @@
-  // ===== Sync EN/CN blockquote heights (sidebar before paragraph 1) =====
+﻿  // ===== Sync EN/CN blockquote heights (sidebar before paragraph 1) =====
   function syncBlockquoteHeights() {
     const enBq = document.querySelectorAll('.col-body.en blockquote');
     const cnBq = document.querySelectorAll('.col-body.cn blockquote');
@@ -157,6 +157,7 @@
 
   // ===== Exam-prep UI injection (article HTML stays untouched) =====
   function ensureExamUI() {
+    if (!window.__exam) return; // exam-panel.js not loaded yet; called again after load
     // 1) Float menu: wrap base buttons, add qtype/syntax/material/root actions
     const menu = document.getElementById('float-menu');
     if (menu && !menu.dataset.examReady) {
@@ -183,11 +184,11 @@
       const qrow = document.createElement('div');
       qrow.className = 'float-qrow';
       qrow.id = 'float-qrow';
-      QTYPE_ORDER.forEach(q => {
+      window.__exam.QTYPE_ORDER.forEach(q => {
         const b = document.createElement('button');
         b.type = 'button';
         b.dataset.qact = q;
-        b.textContent = QTYPE_META[q].label;
+        b.textContent = window.__exam.QTYPE_META[q].label;
         qrow.appendChild(b);
       });
       menu.appendChild(qrow);
@@ -209,9 +210,9 @@
         '<div class="syntax-note-row"><input type="text" id="syntax-note" placeholder="结构笔记：主干是什么？哪部分可以省略？"></div>' +
         '<div class="syntax-actions"><button type="button" data-cancel="1">取消</button><button type="button" class="primary" data-save="1">存入句库</button></div>';
       document.body.appendChild(sp);
-      sp.querySelector('[data-close]').addEventListener('click', closeSyntaxPanel);
-      sp.querySelector('[data-cancel]').addEventListener('click', closeSyntaxPanel);
-      sp.querySelector('[data-save]').addEventListener('click', saveSyntax);
+      sp.querySelector('[data-close]').addEventListener('click', () => window.__exam.closeSyntaxPanel());
+      sp.querySelector('[data-cancel]').addEventListener('click', () => window.__exam.closeSyntaxPanel());
+      sp.querySelector('[data-save]').addEventListener('click', () => window.__exam.saveSyntax());
     }
     // 3) Writing material panel (legacy fields reused by upgradeMaterialPanel)
     if (!document.getElementById('material-panel')) {
@@ -228,9 +229,9 @@
         '<div class="material-field"><label for="material-logic">写作逻辑</label><input type="text" id="material-logic" placeholder="写作逻辑…"></div>' +
         '<div class="syntax-actions"><button type="button" data-cancel="1">取消</button><button type="button" class="primary" data-save="1">保存素材</button></div>';
       document.body.appendChild(mp);
-      mp.querySelector('[data-close]').addEventListener('click', closeMaterialPanel);
-      mp.querySelector('[data-cancel]').addEventListener('click', closeMaterialPanel);
-      mp.querySelector('[data-save]').addEventListener('click', saveMaterial);
+      mp.querySelector('[data-close]').addEventListener('click', () => window.__exam.closeMaterialPanel());
+      mp.querySelector('[data-cancel]').addEventListener('click', () => window.__exam.closeMaterialPanel());
+      mp.querySelector('[data-save]').addEventListener('click', () => window.__exam.saveMaterial());
     }
     // 4) Word root / affix panel — fill in meanings while reading
     if (!document.getElementById('root-panel')) {
@@ -248,10 +249,10 @@
         '<div class="root-suggest" id="root-suggest"></div>' +
         '<div class="syntax-actions"><button type="button" data-cancel="1">取消</button><button type="button" data-again="1">保存并继续</button><button type="button" class="primary" data-save="1">保存</button></div>';
       document.body.appendChild(rp);
-      rp.querySelector('[data-close]').addEventListener('click', closeRootPanel);
-      rp.querySelector('[data-cancel]').addEventListener('click', closeRootPanel);
-      rp.querySelector('[data-save]').addEventListener('click', () => saveRootCard(false));
-      rp.querySelector('[data-again]').addEventListener('click', () => saveRootCard(true));
+      rp.querySelector('[data-close]').addEventListener('click', () => window.__exam.closeRootPanel());
+      rp.querySelector('[data-cancel]').addEventListener('click', () => window.__exam.closeRootPanel());
+      rp.querySelector('[data-save]').addEventListener('click', () => window.__exam.saveRootCard(false));
+      rp.querySelector('[data-again]').addEventListener('click', () => window.__exam.saveRootCard(true));
     }
     // 5) Advice-composition panel — whole-article writing accumulation
     if (!document.getElementById('compose-panel')) {
@@ -264,9 +265,9 @@
         '<div class="compose-list" id="compose-list"></div>' +
         '<div class="syntax-actions"><button type="button" data-cancel="1">关闭</button><button type="button" class="primary" data-add="1">＋ 新增条目</button></div>';
       document.body.appendChild(cp);
-      cp.querySelector('[data-close]').addEventListener('click', closeComposePanel);
-      cp.querySelector('[data-cancel]').addEventListener('click', closeComposePanel);
-      cp.querySelector('[data-add]').addEventListener('click', () => addComposeEntry());
+      cp.querySelector('[data-close]').addEventListener('click', () => window.__exam.closeComposePanel());
+      cp.querySelector('[data-cancel]').addEventListener('click', () => window.__exam.closeComposePanel());
+      cp.querySelector('[data-add]').addEventListener('click', () => window.__exam.addComposeEntry());
     }
     // 6) Reading statistics panel
     if (!document.getElementById('stats-panel')) {
@@ -346,13 +347,13 @@
             const qrow = document.getElementById('float-qrow');
             if (qrow) qrow.classList.toggle('open');
           } else if (act === 'syntax') {
-            openSyntaxPanel(info.text);
+            loadExamPanel().then(E => E.openSyntaxPanel(info.text));
             window.getSelection().removeAllRanges(); hideMenu();
           } else if (act === 'material') {
-            openMaterialPanel(info.text);
+            loadExamPanel().then(E => E.openMaterialPanel(info.text));
             window.getSelection().removeAllRanges(); hideMenu();
           } else if (act === 'root') {
-            openRootPanel(info.text);
+            loadExamPanel().then(E => E.openRootPanel(info.text));
             window.getSelection().removeAllRanges(); hideMenu();
           } else {
             addAnnotation(act, info.text, info.context, '', info.source, info.paraIdx, info.line);
@@ -362,7 +363,12 @@
       });
       menu.querySelectorAll('button[data-qact]').forEach(btn => {
         btn.onclick = () => {
-          addQtypeAnnotation(btn.dataset.qact, info.text, info.context, info.paraIdx);
+          // addQtypeAnnotation lives in 06-exam.js (lazy-loaded as exam-panel.js).
+          // Bridge: invoke through window.__exam if ready, otherwise load & retry.
+          const fire = () => window.__exam && window.__exam.addQtypeAnnotation(btn.dataset.qact, info.text, info.context, info.paraIdx);
+          if (!fire()) {
+            loadExamPanel().then(() => fire());
+          }
           const qrow = document.getElementById('float-qrow');
           if (qrow) qrow.classList.remove('open');
           window.getSelection().removeAllRanges(); hideMenu();

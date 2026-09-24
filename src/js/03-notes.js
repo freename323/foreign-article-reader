@@ -24,7 +24,8 @@
   }
   function getFilteredSorted() {
     const bucketAnns = notesBucket === 'all' ? annotations : annotations.filter(a => a.bucket === notesBucket);
-    const filtered = bucketAnns.filter(matchesAllFilters);
+    const pred = (window.__exam && window.__exam.matchesAllFilters) || (() => true);
+    const filtered = bucketAnns.filter(pred);
     return filtered.slice().sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
   }
   function jumpToIdx(idx) {
@@ -113,6 +114,11 @@
   function renderNotes() {
     const list = document.getElementById('notes-list');
     if (!list) return;
+    // Ensure exam-panel.js loaded (provides tag filters, qtype cards, etc.)
+    if (!window.__exam && !list.dataset.examLoading) {
+      list.dataset.examLoading = '1';
+      loadExamPanel().then(() => { list.dataset.examLoading = ''; renderNotes(); }).catch(()=>{});
+    }
     // Tabs
     const vocabCount = annotations.filter(a => a.bucket === 'vocab').length;
     const noteCount = annotations.filter(a => a.bucket === 'note').length;
@@ -139,9 +145,14 @@
       updateJumpNav();
       return;
     }
-    // Qtype (题型) tab
+    // Qtype (题型) tab — lazy-load exam-panel.js on first access
     if (notesBucket === 'qtype') {
-      list.innerHTML = tabsHtml + renderQtypeList();
+      if (!window.__exam) {
+        list.innerHTML = tabsHtml + '<div class="empty-hint">⏳ 加载题型引擎…</div>';
+        loadExamPanel().then(() => renderNotes()).catch(()=>{});
+        return;
+      }
+      list.innerHTML = tabsHtml + window.__exam.renderQtypeList();
       // Tab buttons
       list.querySelectorAll('[data-notes-bucket]').forEach(btn => {
         btn.addEventListener('click', () => setNotesBucket(btn.dataset.notesBucket));
@@ -150,7 +161,7 @@
       list.querySelectorAll('[data-del]').forEach(el => {
         el.addEventListener('click', () => deleteAnnotation(el.dataset.del));
       });
-      wireQtypeInteractions(list);
+      window.__exam.wireQtypeInteractions(list);
       updateJumpNav();
       return;
     }
@@ -171,14 +182,14 @@
       return;
     }
     // Tag filter row (only rendered when tags exist) + combined filters
-    const tagFilterHtml = renderTagFilterRow(bucketAnns);
-    const filtered = bucketAnns.filter(matchesAllFilters);
+    const tagFilterHtml = window.__exam ? window.__exam.renderTagFilterRow(bucketAnns) : '';
+    const filtered = bucketAnns.filter(window.__exam ? window.__exam.matchesAllFilters : () => true);
     if (filtered.length === 0) {
       list.innerHTML = tabsHtml + tagFilterHtml + '<div class="empty-hint">没有符合当前筛选条件的标注。<br>点击上方标签可调整筛选。</div>';
       list.querySelectorAll('[data-notes-bucket]').forEach(btn => {
         btn.addEventListener('click', () => setNotesBucket(btn.dataset.notesBucket));
       });
-      wireTagInteractions(list);
+      wireTagInteractionsSafe(list);
       updateJumpNav();
       return;
     }
@@ -189,7 +200,7 @@
     groups.forEach(g => {
       cardsHtml += `<div class="notes-date-header date-count">${g.label}<span>${g.items.length} 条</span></div>`;
       cardsHtml += g.items.map(a => {
-        if (a.bucket === 'qtype') return renderQtypeCard(a, QTYPE_META[a.qtype] || QTYPE_META.detail);
+        if (a.bucket === 'qtype' && window.__exam) return window.__exam.renderQtypeCard(a, window.__exam.QTYPE_META[a.qtype] || window.__exam.QTYPE_META.detail);
         if (a.source === 'cn') return renderCNNote(a, typeName);
         return renderENNote(a, typeName);
       }).join('');
@@ -217,9 +228,11 @@
       btn.addEventListener('click', () => setNotesBucket(btn.dataset.notesBucket));
     });
     // Wire qtype cards if any are present (e.g. in the 全部 tab)
-    wireQtypeInteractions(list);
+    wireQtypeSafe(list);
     updateJumpNav();
   }
+  function wireTagInteractionsSafe(scope) { if (window.__exam) window.__exam.wireTagInteractions(scope); }
+  function wireQtypeSafe(scope) { if (window.__exam) window.__exam.wireQtypeInteractions(scope); }
   function renderENNote(a, typeName) {
     const timeStr = fmtTimeHM(a.createdAt);
     const editedStr = a.updatedAt ? `<span class="note-time-stamp edited" title="修改于 ${fmtTimeHM(a.updatedAt)}">${fmtTimeHM(a.updatedAt)}</span>` : '';
@@ -243,7 +256,7 @@
             <td class="context" data-jump="${a.id}">${esc(a.context)}</td>
           </tr>` : ''}
         </table>
-        ${renderTagRow(a)}
+        ${window.__exam ? window.__exam.renderTagRow(a) : ''}
       </div>`;
   }
   function renderCNNote(a, typeName) {
@@ -260,7 +273,7 @@
           <span class="note-text-cn" contenteditable="true" data-note-edit="${a.id}"
                 data-placeholder="（笔记）">${esc(a.note || '')}</span>
         </div>
-        ${renderTagRow(a)}
+        ${window.__exam ? window.__exam.renderTagRow(a) : ''}
       </div>`;
   }
   function flashNote(id) {
