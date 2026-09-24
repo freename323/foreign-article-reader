@@ -22,7 +22,7 @@ MODULES = [
     '03-notes.js',
     '04-scroll.js',
     '05-export.js',
-    '06-exam.js',
+    # '06-exam.js' — now lazy-loaded as exam-panel.js via window.__exam bridge
     '07-wordfreq.js',
     '08-search.js',
     '09-reading.js',

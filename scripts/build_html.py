@@ -60,7 +60,14 @@ def main():
             fp.write(CSS)
         with open(d / 'reader.js', 'w', encoding='utf-8', newline='\n') as fp:
             fp.write(JS)
-        print(f"  Wrote reader.css + reader.js into {d}")
+        # exam-panel.js: lazy-loaded exam/material features (separate file, ~49KB)
+        exam_src = _SRC_DIR / 'js' / '06-exam.js'
+        if exam_src.exists():
+            with open(d / 'exam-panel.js', 'w', encoding='utf-8', newline='\n') as fp:
+                fp.write(exam_src.read_text(encoding='utf-8'))
+            print(f"  Wrote reader.css + reader.js + exam-panel.js into {d}")
+        else:
+            print(f"  Wrote reader.css + reader.js into {d}")
 
     # Generate Hub and Compare pages alongside articles
     script_dir = Path(__file__).parent

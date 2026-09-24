@@ -1,4 +1,4 @@
-(function() {
+﻿(function() {
   const articleId = location.pathname.split('/').pop() || 'article';
   const ANNO_KEY = 'annotations:' + articleId;
   const SUM_KEY = 'summary:' + articleId;
@@ -15,6 +15,7 @@
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
   function unesc(s) { return String(s == null ? '' : s).replace(/&(amp|lt|gt|quot|#39);/g, c => ({ '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" }[c])); }
   function genId() { return Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
+  function localDateStr(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 
   // ===== Load/save =====
   function loadAll() {
@@ -69,4 +70,40 @@
     if (e && (e.name === 'QuotaExceededError' || e.code === 22)) {
       showTopToast('❌ 本地存储已满！请先导出备份再清理：💾 数据 → 备份全部数据 → 清理数据', 10000);
     }
+  }
+
+  // ===== Toast (shared with exam-panel.js) =====
+  function showTopToast(msg, ms) {
+    let t = document.getElementById('exam-toast');
+    if (!t) {
+      t = document.createElement('div');
+      t.id = 'exam-toast';
+      t.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:8px 18px;border-radius:6px;font-size:13px;z-index:99999;opacity:0;transition:opacity .3s;pointer-events:none;font-family:-apple-system,sans-serif;max-width:80vw;text-align:center;white-space:pre-line;';
+      document.body.appendChild(t);
+    }
+    t.textContent = msg;
+    t.style.opacity = '1';
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => { t.style.opacity = '0'; }, ms || 2000);
+  }
+  function getShortTitle() {
+    const h1 = document.querySelector('.title-block h1:not(.cn)');
+    let t = h1 ? h1.textContent.trim() : 'article';
+    if (t.length > 40) t = t.slice(0, 40) + '…';
+    return t;
+  }
+
+  // ===== Lazy-load exam-panel.js (49KB, only when exam/material features are used) =====
+  let _examLoading = null;
+  function loadExamPanel() {
+    if (window.__exam) return Promise.resolve(window.__exam);
+    if (_examLoading) return _examLoading;
+    _examLoading = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'exam-panel.js';
+      s.onload = () => resolve(window.__exam);
+      s.onerror = () => { _examLoading = null; reject(new Error('exam-panel.js failed to load')); };
+      document.head.appendChild(s);
+    });
+    return _examLoading;
   }

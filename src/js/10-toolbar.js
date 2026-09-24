@@ -1,4 +1,4 @@
-  // ===== Injected menu extras (UX-2 / UX-4 / UX-7) — article HTML stays untouched =====
+﻿  // ===== Injected menu extras (UX-2 / UX-4 / UX-7) — article HTML stays untouched =====
   const EXAM_SLUGS = {
     'SundayTimes_2026-06-14_Hidden_Cost_AI_Fortson_EN-CN_final.html': 'ai_cost',
     'WSJ_2026-03-21_AI_Regulation_Fryer_EN-CN_final.html': 'ai_regulation',
@@ -85,7 +85,8 @@
       menuItemHTML('stats-panel-btn', '📊', '阅读统计') +
       '<div class="menu-sep"></div><div class="menu-section-label">复习</div>' +
       menuItemHTML('review-due-btn', '🎯', dueN > 0 ? '今日待复习 ' + dueN + ' 条' : '复习生词（文库）', '到期生词与题型卡，跳转文库开始复习', '', dueN > 0 ? 'due-hot' : '') +
-      '<div class="menu-sep"></div><div class="menu-section-label">写作积累</div>' +
+      '<div class="menu-sep"></div><div class="menu-section-label">写作工坊</div>' +
+      menuItemHTML('writing-workshop-btn', '✍️', '写作工坊', '素材 / 建议文 / 长难句 / 词根 集中管理') +
       menuItemHTML('compose-panel-btn', '🖊', '建议文积累（全文）') +
       '<div class="menu-sep"></div><div class="menu-section-label">AI 助手（右侧分屏）</div>' +
       menuItemHTML('ai-zhipu-btn', '🤖', '智谱清言') +
@@ -139,7 +140,8 @@
     on('toggle-search-btn', () => toggleSearch());
     on('crossref-btn', () => toggleCrossRef());
     on('stats-panel-btn', openStatsPanel);
-    on('compose-panel-btn', openComposePanel);
+    on('compose-panel-btn', () => loadExamPanel().then(E => E.openComposePanel()).catch(()=>{}));
+    on('writing-workshop-btn', () => loadExamPanel().then(E => E.openWritingWorkshop()).catch(()=>{}));
     on('review-due-btn', openHub);
     on('ai-zhipu-btn', () => openAISide('zhipu'));
     on('ai-qwen-btn', () => openAISide('qwen'));
@@ -227,11 +229,14 @@
     updateNotesButtons();
     syncToRegistry();
     setupScrollSync();
-    ensureExamUI();
     setupFloatMenu();
-    setupSyntaxPanel();
-    upgradeSyntaxPanel();
-    upgradeMaterialPanel();
+    // Lazy-load exam-panel.js, then init exam-related UI
+    loadExamPanel().then(() => {
+      ensureExamUI();
+      setupSyntaxPanel();
+      upgradeSyntaxPanel();
+      upgradeMaterialPanel();
+    }).catch(() => {});
     // UX-6: defer first height sync to idle time (fallback: 250ms)
     deferInitialHeightSync();
     // 其余运行时注入（UX-3 移动端列切换条、UX-8 搜索选项等）——文章 HTML 本体不动
@@ -320,14 +325,15 @@
   window.toggleSearch = toggleSearch;
   window.searchNav = searchNav;
   // Exam-prep panel handlers (inline onclick)
-  window.openSyntaxPanel = openSyntaxPanel;
-  window.closeSyntaxPanel = closeSyntaxPanel;
-  window.saveSyntax = saveSyntax;
-  window.openMaterialPanel = openMaterialPanel;
-  window.closeMaterialPanel = closeMaterialPanel;
-  window.saveMaterial = saveMaterial;
-  window.exportQtype = exportQtype;
-  window.recordRoot = recordRoot;
+  // Exam panel functions — loaded lazily via exam-panel.js
+  window.openSyntaxPanel = (t) => loadExamPanel().then(E => E.openSyntaxPanel(t));
+  window.closeSyntaxPanel = () => loadExamPanel().then(E => E.closeSyntaxPanel());
+  window.saveSyntax = () => loadExamPanel().then(E => E.saveSyntax());
+  window.openMaterialPanel = (t) => loadExamPanel().then(E => E.openMaterialPanel(t));
+  window.closeMaterialPanel = () => loadExamPanel().then(E => E.closeMaterialPanel());
+  window.saveMaterial = () => loadExamPanel().then(E => E.saveMaterial());
+  window.exportQtype = () => loadExamPanel().then(E => E.exportQtype());
+  window.recordRoot = (t) => loadExamPanel().then(E => E.recordRoot(t));
   // ===== Dropdown Menu System =====
   function toggleMenu(side) {
     if (side === 'left') side = 'view';   // 兼容旧模板里的 inline onclick
@@ -404,4 +410,20 @@
   window.jumpToLastPosition = jumpToLastPosition;
   window.jumpNext = jumpNext;
   window.jumpPrev = jumpPrev;
+
+  // ===== Bridge to exam-panel.js (lazy-loaded external script) =====
+  window.__reader = {
+    esc, genId, articleId,
+    get annotations() { return annotations; },
+    saveAnnotations, renderNotes,
+    get settings() { return settings; },
+    saveSettings, closeAllMenus,
+    showTopToast, getShortTitle,
+    get qTypeFilter() { return qTypeFilter; },
+    set qTypeFilter(v) { qTypeFilter = v; },
+    get qMasteryFilter() { return qMasteryFilter; },
+    set qMasteryFilter(v) { qMasteryFilter = v; },
+    get activeTagFilters() { return activeTagFilters; },
+    get noteSearchQuery() { return noteSearchQuery; },
+  };
 })();
