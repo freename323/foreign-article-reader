@@ -81,6 +81,12 @@
     document.querySelectorAll('.col-body p[data-para-idx], .col-body blockquote, .para-summary-item .en-sum, .para-summary-item .cn-sum').forEach(el => { el.style.minHeight = ''; });
   }
   function doHeightSync(force) {
+    // 报纸阅读页：每版由分版算法独立排版，跨列强行等高既不适用、又会污染分版测量
+    if (typeof paperIsOpen === 'function' && paperIsOpen()) {
+      clearForcedHeights();
+      lastSyncedWidth = -1;
+      return;
+    }
     // Mobile single-column layout needs no cross-column alignment
     if (mobileQuery.matches) {
       clearForcedHeights();
@@ -122,6 +128,8 @@
     let syncing = false;
     function syncTo(src, dst) {
       if (syncing || jumpInProgress) return;
+      // 报纸阅读页：EN / CN 是同一版的对开两页，不存在独立纵向滚动，同步无意义
+      if (typeof paperIsOpen === 'function' && paperIsOpen()) return;
       // Find topmost visible paragraph in src (in viewport coords)
       const paragraphs = src.querySelectorAll('p[data-para-idx]');
       let topP = null;
@@ -150,6 +158,11 @@
     cn.addEventListener('scroll', () => syncTo(cn, en), { passive: true });
     // Expose for re-sync after layout changes
     window.__resyncScroll = () => {
+      // 报纸阅读页靠重新分版响应布局变化（字号 / 栏宽变了，版次边界也要重算）
+      if (typeof paperIsOpen === 'function' && paperIsOpen()) {
+        if (typeof window.__paperRepaginate === 'function') window.__paperRepaginate();
+        return;
+      }
       doHeightSync(true);
       en.dispatchEvent(new Event('scroll'));
     };
@@ -173,7 +186,12 @@
         { act: 'qtype-toggle', icon: '🎯', title: '题型标注' },
         { act: 'syntax', icon: '🧩', title: '长难句拆解' },
         { act: 'material', icon: '✍️', title: '写作素材' },
-        { act: 'root', icon: '🌱', title: '记入词根库' }
+        { act: 'root', icon: '🌱', title: '记入词根库' },
+        // F16：把「我读错了」也当成一种标注 —— 它和生词一样是复习材料，
+        // 但语义是「理解偏差」，bucket 独立，笔记面板有单独页签
+        { act: 'misread', icon: '🌀', title: '理解偏差（我读错了）' },
+        // F08：选中一个词 → 记它的同义替换（写作时直接用）
+        { act: 'synonym', icon: '🔁', title: '同义替换' }
       ].forEach(x => {
         const b = document.createElement('button');
         b.dataset.act = x.act;
@@ -347,13 +365,17 @@
             const qrow = document.getElementById('float-qrow');
             if (qrow) qrow.classList.toggle('open');
           } else if (act === 'syntax') {
-            loadExamPanel().then(E => E.openSyntaxPanel(info.text));
+            loadExamPanel().then(E => E.openSyntaxPanel(info.text, info.paraIdx));
             window.getSelection().removeAllRanges(); hideMenu();
           } else if (act === 'material') {
-            loadExamPanel().then(E => E.openMaterialPanel(info.text));
+            loadExamPanel().then(E => E.openMaterialPanel(info.text, info.paraIdx));
             window.getSelection().removeAllRanges(); hideMenu();
           } else if (act === 'root') {
-            loadExamPanel().then(E => E.openRootPanel(info.text));
+            loadExamPanel().then(E => E.openRootPanel(info.text, info.paraIdx));
+            window.getSelection().removeAllRanges(); hideMenu();
+          } else if (act === 'synonym') {
+            // F08：写作工坊的「同义替换」页签。走 window.__exam 桥（面板在 exam-panel.js 里）
+            loadExamPanel().then(E => E.openSynonymPanel && E.openSynonymPanel(info.text));
             window.getSelection().removeAllRanges(); hideMenu();
           } else {
             addAnnotation(act, info.text, info.context, '', info.source, info.paraIdx, info.line);
