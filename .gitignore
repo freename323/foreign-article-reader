@@ -16,6 +16,10 @@ reader-backup-*.json
 .mimosa/
 .qoder/
 .workspace-marker
+.workbuddy/
+
+# === 设计草稿（不公开）===
+proposals/
 
 # === 旧 git 历史备份（含受版权保护的内容，不公开）===
 .git_backup/

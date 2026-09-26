@@ -22,16 +22,21 @@
   }
   function applyLayout() {
     const w = document.querySelector('.main-wrap');
+    if (!w) return;                       // 页面骨架缺失时不再抛 TypeError（保持与其它分支一致的容错）
     w.classList.toggle('no-summary', !settings.showSummary);
     w.classList.toggle('no-cn', !settings.showCN);
-    document.getElementById('toggle-summary-btn').classList.toggle('active', settings.showSummary);
-    document.getElementById('toggle-cn-btn').classList.toggle('active', settings.showCN);
+    const sumBtn = document.getElementById('toggle-summary-btn');
+    if (sumBtn) sumBtn.classList.toggle('active', settings.showSummary);
+    const cnBtn = document.getElementById('toggle-cn-btn');
+    if (cnBtn) cnBtn.classList.toggle('active', settings.showCN);
     const notesBtn = document.getElementById('toggle-notes-btn');
     if (notesBtn) notesBtn.classList.toggle('active', settings.showNotes);
     const hdr = document.querySelector('.header');
     if (hdr) hdr.classList.toggle('collapsed', !settings.showHeader);
     const hdrBtn = document.getElementById('toggle-header-btn');
     if (hdrBtn) hdrBtn.classList.toggle('active', settings.showHeader);
+    // 报纸阅读页有自己的一套版面容器，显隐要同步过去
+    if (typeof paperApplyLayout === 'function') paperApplyLayout();
   }
   function toggleSummary() { settings.showSummary = !settings.showSummary; saveSettings(); applyLayout(); showTopToast(settings.showSummary ? '概要列已显示' : '概要列已隐藏'); setTimeout(() => window.__resyncScroll && window.__resyncScroll(), 50); }
   function toggleCN() { settings.showCN = !settings.showCN; saveSettings(); applyLayout(); showTopToast(settings.showCN ? '中文列已显示' : '中文列已隐藏'); setTimeout(() => window.__resyncScroll && window.__resyncScroll(), 50); }

@@ -76,7 +76,15 @@ switch ($Command) {
         Invoke-Python "concat_reader.py" @()
         Copy-Item (Join-Path $ProjectRoot "src\reader.css") (Join-Path $ArticlesDir "reader.css") -Force
         Copy-Item (Join-Path $ProjectRoot "src\reader.js") (Join-Path $ArticlesDir "reader.js") -Force
-        Write-Ok "reader.css + reader.js 已同步"
+        # exam-panel.js 是懒加载的独立文件（源: src/js/06-exam.js），漏拷会导致「改了没生效」
+        Copy-Item (Join-Path $ProjectRoot "src\js\06-exam.js") (Join-Path $ArticlesDir "exam-panel.js") -Force
+        Write-Ok "reader.css + reader.js + exam-panel.js 已同步"
+    }
+
+    "meta" {
+        Write-Step "同步文章 <body> 元数据（data-edition / has-exam）"
+        Invoke-Python "sync_article_meta.py" @()
+        Write-Ok "文章元数据已同步"
     }
 
     "all" {
@@ -96,7 +104,12 @@ switch ($Command) {
         Write-Ok "HTML 构建"
         Copy-Item (Join-Path $ProjectRoot "src\reader.css") (Join-Path $ArticlesDir "reader.css") -Force
         Copy-Item (Join-Path $ProjectRoot "src\reader.js") (Join-Path $ArticlesDir "reader.js") -Force
+        Copy-Item (Join-Path $ProjectRoot "src\js\06-exam.js") (Join-Path $ArticlesDir "exam-panel.js") -Force
         Write-Ok "资源同步"
+        Invoke-Python "sync_article_meta.py" @()
+        Write-Ok "文章元数据同步"
+        Invoke-Python "stamp_assets.py" @()
+        Write-Ok "缓存版本号刷新"
         Write-Host "`n全部完成！" -ForegroundColor Green
     }
 
@@ -119,9 +132,10 @@ switch ($Command) {
   summaries  生成段摘要 + thesis  --data <json>
   concat     合并 src/js/*.js -> src/reader.js
   build      合并模块 + 构建 HTML  --data <json> --out-dir <目录>
+  meta       同步文章 <body> 元数据（data-edition / data-has-exam）
   test       运行 UI 测试 (25 项)  --dir <目录>
-  sync       合并并同步 src/reader.css|js -> articles/
-  all        完整流程: verify -> summaries -> concat -> build -> sync
+  sync       合并并同步 src/reader.css|js + exam-panel.js -> articles/
+  all        完整流程: verify -> summaries -> concat -> build -> sync -> meta
   clean      清理 __pycache__
   help       显示此帮助
 

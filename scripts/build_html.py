@@ -44,7 +44,7 @@ def main():
 
     written_dirs = set()
     for art in articles:
-        html = build_html(art)
+        html = build_html(art, out_dir)
         if args.out and len(articles) == 1:
             out_path = Path(args.out)
         else:
@@ -199,7 +199,7 @@ JS = _read_asset('reader.js')
 
 
 # ---------- Build HTML ----------
-def build_html(art):
+def build_html(art, out_dir=None):
     """Build a complete HTML for one article."""
     en_title = esc(art['en_title'])
     cn_title = esc(art['cn_title'])
@@ -226,6 +226,11 @@ def build_html(art):
     en_body = art['en_body']
     art_block = build_art_block(art['html'])
     edition = edition_of(art['html'])
+    # 是否挂考试入口：以「同目录下是否存在 exam_<slug>.html」为准，写进 <body data-has-exam>。
+    # reader.js 只读这个属性，不再维护「文件名 → slug」映射表（新增文章无需改 JS）。
+    has_exam = bool(edition) and out_dir is not None and (out_dir / f'exam_{edition}.html').exists()
+    exam_attrs = (' data-has-exam="true" data-exam-types="reading,cloze,newtype,translation,writing"'
+                  if has_exam else '')
     cn_body = art['cn_body']
 
     # Number labels for paragraphs (EN: roman numerals — 外刊惯例且窄，不与正文重叠)
@@ -263,7 +268,7 @@ def build_html(art):
 <title>{en_title} / {cn_title} — Bilingual EN/CN · 3-Column · Notes</title>
 <link rel="stylesheet" href="reader.css">
 </head>
-<body data-edition="{edition}">
+<body data-edition="{edition}"{exam_attrs}>
 
 <div class="progress-bar" id="progress-bar"></div>
 

@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>英语学习软件编码逻辑调研报告 — 面向外刊阅读器的改进建议</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 960px; margin: 0 auto; padding: 40px 24px; line-height: 1.85; color: #1a202c; background: #f7fafc; }
+  h1 { text-align: center; border-bottom: 3px solid #2b6cb0; padding-bottom: 16px; color: #1a365d; font-size: 26px; }
+  h2 { color: #2b6cb0; border-left: 5px solid #2b6cb0; padding-left: 14px; margin-top: 52px; font-size: 22px; }
+  h3 { color: #2c5282; margin-top: 32px; font-size: 18px; }
+  h4 { color: #4a5568; margin-top: 20px; font-size: 15px; }
+  .meta { text-align: center; color: #718096; margin-bottom: 36px; font-size: 14px; }
+  .card { background: #fff; border-radius: 10px; padding: 22px 28px; margin: 18px 0; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  .tag { display: inline-block; background: #ebf8ff; color: #2b6cb0; padding: 2px 10px; border-radius: 12px; font-size: 12px; margin: 2px 4px 2px 0; }
+  .tag-warn { background: #fff3cd; color: #856404; }
+  .tag-ok { background: #d4edda; color: #155724; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+  th, td { border: 1px solid #e2e8f0; padding: 9px 12px; text-align: left; vertical-align: top; }
+  th { background: #edf2f7; color: #2d3748; white-space: nowrap; }
+  tr:nth-child(even) { background: #f7fafc; }
+  code { background: #edf2f7; padding: 2px 6px; border-radius: 4px; font-size: 13px; font-family: "Consolas", monospace; }
+  pre { background: #1a202c; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; color: inherit; padding: 0; }
+  .flow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 12px 0; font-size: 13px; }
+  .flow .node { background: #2b6cb0; color: #fff; padding: 5px 12px; border-radius: 6px; }
+  .flow .arrow { color: #718096; font-size: 16px; }
+  .p0 { border-left: 4px solid #e53e3e; }
+  .p1 { border-left: 4px solid #dd6b20; }
+  .p2 { border-left: 4px solid #3182ce; }
+  .p3 { border-left: 4px solid #718096; }
+  .priority { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; color: #fff; }
+  .pr-0 { background: #e53e3e; }
+  .pr-1 { background: #dd6b20; }
+  .pr-2 { background: #3182ce; }
+  .pr-3 { background: #718096; }
+  .conclusion { background: linear-gradient(135deg, #ebf8ff 0%, #e9d8fd 100%); border-radius: 10px; padding: 28px; margin-top: 36px; }
+  ul { padding-left: 22px; }
+  li { margin: 5px 0; }
+  .insight { background: #fffff0; border-left: 3px solid #ecc94b; padding: 10px 16px; margin: 12px 0; border-radius: 0 6px 6px 0; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<h1>英语学习软件编码逻辑调研报告</h1>
+<div class="meta">调研对象：Duolingo · Grammarly · MarginNote · 扇贝考研 ｜ 产品场景：10篇外刊 + 阅读模式 + 考研英语一考试模式 ｜ 2026-09-24</div>
+
+<!-- ============ 产品定位回顾 ============ -->
+<div class="card">
+<h3>产品定位与核心约束</h3>
+<p>本报告所有建议均基于以下产品事实：</p>
+<ul>
+<li><b>内容载体</b>：10篇精选外刊文章（WSJ / Science / SundayTimes），每篇是独立的学习单元</li>
+<li><b>双模式</b>：阅读模式（精读、标注、笔记）+ 考试模式（仿照考研英语一）</li>
+<li><b>考试对标</b>：考研英语一 = 完形10分 + 阅读A 40分 + 新题型10分 + 翻译10分 + 小作文10分 + 大作文20分</li>
+<li><b>技术约束</b>：纯前端 HTML/JS，localStorage 存储，无后端，单文件可部署</li>
+<li><b>核心目标</b>：通过10篇文章的深度精读 + 考试练习，实现考研英语能力的实质性提升</li>
+</ul>
+</div>
+
+<!-- ============ 第一部分：四款产品速览 ============ -->
+<h2>一、四款产品编码逻辑速览</h2>
+
+<div class="card">
+<h3>1.1 Duolingo — 练习驱动 + Server-Driven UI</h3>
+<p><span class="tag">MVVM</span><span class="tag">Repository</span><span class="tag">SDUI</span><span class="tag">间隔重复</span></p>
+<ul>
+<li><b>SDUI 架构</b>：后端返回 <code>SDUIResponse</code>（screens + components + stylesheet + dataModel），客户端只负责渲染，新增练习类型只需后端加配置</li>
+<li><b>练习数据驱动</b>：每种练习是 JSON（type/prompt/options/solution），前端按 type 渲染对应交互组件</li>
+<li><b>间隔重复引擎</b>：根据记忆衰减曲线调度复习内容，不是按时间倒序展示</li>
+<li><b>游戏化状态</b>：XP / Streak / Hearts / Leagues 都是独立数据结构，与练习内容解耦</li>
+</ul>
+</div>
+
+<div class="card">
+<h3>1.2 Grammarly — 实时文本分析 + OT协同编辑</h3>
+<p><span class="tag">QuillJS</span><span class="tag">Delta格式</span><span class="tag">OT协议</span><span class="tag">GECToR</span></p>
+<ul>
+<li><b>Delta 变更记录</b>：文本变更只用 insert/delete/retain 三种原子操作，比存全文省空间，天然支持版本历史</li>
+<li><b>OT 协同</b>：变更队列 + rebase 模块，乐观更新UI，服务器ACK后确认，类似Git rebase</li>
+<li><b>下划线渲染</b>：不修改原文本，只包装文本节点加 underline 样式，点击弹出建议卡片 accept/dismiss</li>
+<li><b>双层模型</b>：端上快速模型（纠错/预测）+ 后端深度模型（句子级分析）</li>
+</ul>
+</div>
+
+<div class="card">
+<h3>1.3 MarginNote — 精读笔记 + FSRS间隔重复</h3>
+<p><span class="tag">卡片溯源</span><span class="tag">双向链接</span><span class="tag">FSRS</span><span class="tag">语境复习</span></p>
+<ul>
+<li><b>卡片始终绑定来源</b>：书 → 章节 → 脑图节点 → 原文段落，复习时一键回原文</li>
+<li><b>FSRS 算法</b>：比传统SM-2省30%复习时间，每张卡个性化计算下次复习时间</li>
+<li><b>语境复习</b>：复习时显示原文整段而非孤立例句，记忆强度完全不同</li>
+<li><b>四向复习</b>：EN→CN、CN→EN、听音识义、看例默词</li>
+<li><b>双向链接</b>：卡片间 wiki 式 <code>[[标题]]</code> 关联，跨文章串联同一概念</li>
+</ul>
+</div>
+
+<div class="card">
+<h3>1.4 扇贝考研 — 考研垂直 + AI批改</h3>
+<p><span class="tag">真题驱动</span><span class="tag">AI作文批改</span><span class="tag">模板查重</span><span class="tag">三维评分</span></p>
+<ul>
+<li><b>作文批改</b>：AI大模型 + 考研评分标准匹配系统，从逻辑结构/句式优化/用词适配性三维打分</li>
+<li><b>模板查重</b>：识别热门模板句，在原文中标注，提醒用户改写避免撞车</li>
+<li><b>真题词汇</b>：考纲单词与真题语境绑定，阅读中遇到的词自动入词本</li>
+<li><b>错题追踪</b>：按题型/知识点分类错题，生成薄弱点诊断</li>
+</ul>
+</div>
+
+<!-- ============ 第二部分：考研英语一题型与能力映射 ============ -->
+<h2>二、考研英语一题型与10篇文章的能力映射</h2>
+
+<div class="card">
+<p>考研英语一的每种题型都对应特定能力，而10篇外刊文章是这些能力的共同载体。关键在于：<strong>阅读模式积累的素材，必须能直接服务于考试模式的练习</strong>。</p>
+<table>
+<tr><th>题型</th><th>分值</th><th>核心能力</th><th>10篇文章可提供的素材</th><th>当前产品覆盖</th></tr>
+<tr><td>完形填空</td><td>10分</td><td>词汇辨析 + 上下文逻辑</td><td>文章中的近义词组、逻辑连接词</td><td><span class="tag tag-warn">部分</span> 有生词本，无完形练习</td></tr>
+<tr><td>阅读A</td><td>40分</td><td>细节定位 + 推理判断 + 主旨概括</td><td>文章本身 + 题目</td><td><span class="tag tag-ok">有</span> 考试模式有阅读题</td></tr>
+<tr><td>新题型</td><td>10分</td><td>段落逻辑 + 语篇衔接</td><td>文章段落结构</td><td><span class="tag tag-ok">有</span> 七选五/排序/小标题</td></tr>
+<tr><td>翻译</td><td>10分</td><td>长难句拆解 + 英译汉</td><td>文章中的长难句</td><td><span class="tag tag-ok">有</span> 翻译练习 + 长难句面板</td></tr>
+<tr><td>小作文</td><td>10分</td><td>应用文格式 + 套话积累</td><td>文章中的正式表达</td><td><span class="tag tag-warn">弱</span> 写作工坊有素材，无应用文模板</td></tr>
+<tr><td>大作文</td><td>20分</td><td>图画描述 + 逻辑论证 + 高级表达</td><td>文章中的论点/论据/高级句式</td><td><span class="tag tag-warn">弱</span> 有建议文积累，无大作文框架</td></tr>
+</table>
+<div class="insight">核心缺口：写作部分（30分占比最高）的产品支撑最弱；完形填空完全缺失；阅读积累与考试练习之间没有数据打通。</div>
+</div>
+
+<!-- ============ 第三部分：精读方法论的产品化 ============ -->
+<h2>三、外刊精读方法论的产品化路径</h2>
+
+<div class="card">
+<h3>3.1 新东方/奇速英语推荐的精读三步法</h3>
+<ol>
+<li><b>结构解码</b>（20分钟）：拆解标题隐含信息，标注每段功能（论点/论据/转折/结论），绘制逻辑结构图</li>
+<li><b>语言攻坚</b>（20分钟）：筛选高频词汇，整理同义词替换表，拆解长难句主干，进行仿写练习</li>
+<li><b>对照修正</b>：对照译文排查理解偏差，重点梳理中英文表达差异</li>
+</ol>
+<h3>3.2 当前产品的覆盖与缺口</h3>
+<table>
+<tr><th>精读步骤</th><th>方法论要求</th><th>当前功能</th><th>缺口</th></tr>
+<tr><td>结构解码</td><td>段落功能标注 + 逻辑结构图</td><td>段落概要 + 翻译</td><td>无段落功能标签（论点/论据/转折），无逻辑结构图</td></tr>
+<tr><td>语言攻坚-词汇</td><td>高频词筛选 + 同义词替换表</td><td>生词本 + 词频着色</td><td>无同义词替换表，无跨文章词汇关联</td></tr>
+<tr><td>语言攻坚-长难句</td><td>主干拆解 + 仿写</td><td>长难句面板（存句子+笔记）</td><td>无主干标注工具，无仿写练习入口</td></tr>
+<tr><td>对照修正</td><td>译文对照 + 偏差记录</td><td>中英三栏对照</td><td>无"理解偏差"标注功能</td></tr>
+</table>
+</div>
+
+<!-- ============ 第四部分：错题复盘的产品化 ============ -->
+<h2>四、考研错题复盘的产品化路径</h2>
+
+<div class="card">
+<h3>4.1 考研阅读错题的三层复盘法</h3>
+<ol>
+<li><b>第一层：知道对错</b>（大多数人停在这层）</li>
+<li><b>第二层：为什么错</b>——词汇不认识？定位错误？逻辑没搞清？干扰项陷阱？</li>
+<li><b>第三层：同类题规律</b>——错误选项的四大陷阱：偷换概念 / 过度推理 / 无中生有 / 正反混淆</li>
+</ol>
+<h3>4.2 错题数据结构建议</h3>
+<pre><code>{
+  "id": "q_001",
+  "articleId": "ai_cost",
+  "questionType": "detail",        // detail/inference/main_idea/vocabulary
+  "userAnswer": "B",
+  "correctAnswer": "C",
+  "wrongReason": "logic",          // vocab/location/logic/trap
+  "trapType": "over_infer",        // steal_concept/over_infer/not_exist/reverse
+  "note": "原文说may，选项改成will，过度推理",
+  "reviewCount": 0,
+  "lastReview": null,
+  "mastered": false
+}</code></pre>
+<div class="insight">当前考试模式只有对错统计，没有错题归因和陷阱类型标签。这是从"刷题机器"到"考点预判者"的关键跨越。</div>
+</div>
+
+<!-- ============ 第五部分：核心改进建议（重点） ============ -->
+<h2>五、对外刊阅读器的深度改进建议（重点）</h2>
+
+<!-- 5.1 阅读模式 -->
+<div class="card p0">
+<h3>5.1 阅读模式：从"能读"到"精读"</h3>
+
+<h4><span class="priority pr-0">P0</span> 段落功能标签系统</h4>
+<p><b>借鉴</b>：精读方法论中的"结构解码" + MarginNote 的来源绑定</p>
+<p><b>实现</b>：每段加一个可点击的功能标签按钮，用户标注该段是 <code>论点</code> / <code>论据</code> / <code>转折</code> / <code>结论</code> / <code>背景</code> / <code>例证</code>。标签存在 <code>annotations:&lt;articleId&gt;</code> 的新 bucket 中。</p>
+<p><b>价值</b>：</p>
+<ul>
+<li>新题型（七选五/排序）本质考的就是段落功能判断，提前训练</li>
+<li>阅读A的主旨题/推理题需要快速定位论点段，标签可加速定位</li>
+<li>10篇文章都标注后，可以跨文章对比"论点-论据"结构模式</li>
+</ul>
+
+<h4><span class="priority pr-0">P0</span> 已积累内容在原文中的可视化标注</h4>
+<p><b>借鉴</b>：Grammarly 下划线渲染（包装文本节点，不修改原文）</p>
+<p><b>实现</b>：用户存过的生词、长难句、写作素材，在原文中用不同颜色下划线标注：</p>
+<table>
+<tr><th>颜色</th><th>含义</th><th>点击行为</th></tr>
+<tr><td style="color:#e53e3e;font-weight:bold;">红色波浪</td><td>生词</td><td>弹出释义 + 已存笔记</td></tr>
+<tr><td style="color:#3182ce;font-weight:bold;">蓝色下划线</td><td>长难句</td><td>弹出长难句分析 + 结构笔记</td></tr>
+<tr><td style="color:#38a169;font-weight:bold;">绿色高亮</td><td>写作素材</td><td>弹出素材卡片（起因/经过/逻辑）</td></tr>
+<tr><td style="color:#805ad5;font-weight:bold;">紫色虚线</td><td>理解偏差</td><td>弹出当时的错误理解 vs 正确译文</td></tr>
+</table>
+<p><b>技术要点</b>：用 Range API 包装文本节点，和 Grammarly 一样不修改原文 HTML，滚动时自动跟随。</p>
+
+<h4><span class="priority pr-1">P1</span> 同义词替换表</h4>
+<p><b>借鉴</b>：精读方法论中的"语言攻坚" + 考研写作的高级表达替换</p>
+<p><b>实现</b>：用户选中一个词（如 important），可以添加"高级替换"（crucial / vital / significant / indispensable），存在 <code>wsj_writing:synonyms</code> 中。写作时可以查阅。</p>
+<p><b>扩展</b>：10篇文章中出现的同义表达自动聚类（如 show / demonstrate / illustrate / reveal），形成文章级替换表。</p>
+
+<h4><span class="priority pr-1">P1</span> 长难句主干标注工具</h4>
+<p><b>借鉴</b>：奇速英语"长难句解析标主干" + 翻译题型要求</p>
+<p><b>实现</b>：长难句面板中增加"标主干"模式——用户点击句子中的主谓宾，系统用颜色区分：</p>
+<ul>
+<li>主语 = 蓝色，谓语 = 红色，宾语 = 绿色</li>
+<li>定语从句 = 黄色背景，状语从句 = 紫色背景，非谓语 = 灰色删除线</li>
+</ul>
+<p><b>价值</b>：翻译题（10分）的核心就是长难句拆解，这是直接的应试训练。</p>
+
+<h4><span class="priority pr-2">P2</span> 理解偏差标注</h4>
+<p>用户对照译文发现自己理解错了某句，可以选中原句标注"理解偏差"，记录自己的错误理解。复习时优先看这些句子。</p>
+</div>
+
+<!-- 5.2 考试模式 -->
+<div class="card p0">
+<h3>5.2 考试模式：从"做题"到"复盘"</h3>
+
+<h4><span class="priority pr-0">P0</span> 错题归因系统</h4>
+<p><b>借鉴</b>：考研错题三层复盘法 + 扇贝考研的薄弱点诊断</p>
+<p><b>实现</b>：每道错题提交后，弹出归因选择：</p>
+<table>
+<tr><th>错误原因</th><th>说明</th><th>对应训练</th></tr>
+<tr><td><code>vocab</code> 词汇不认识</td><td>关键词/选项词不认识</td><td>自动加入生词本，标记"考试错词"</td></tr>
+<tr><td><code>location</code> 定位错误</td><td>没找到出题句</td><td>高亮出题句，训练定位技巧</td></tr>
+<tr><td><code>logic</code> 逻辑没搞清</td><td>句子/段落逻辑理解错</td><td>关联长难句分析</td></tr>
+<tr><td><code>trap</code> 干扰项陷阱</td><td>被错误选项迷惑</td><td>选择陷阱类型：偷换概念/过度推理/无中生有/正反混淆</td></tr>
+</table>
+<p><b>数据存储</b>：<code>exam:wrong:&lt;articleId&gt;</code>，每题含 wrongReason + trapType + note。</p>
+
+<h4><span class="priority pr-0">P0</span> 错题本 + 间隔重复复习</h4>
+<p><b>借鉴</b>：MarginNote FSRS + Duolingo 间隔重复</p>
+<p><b>实现</b>：</p>
+<ul>
+<li>所有错题自动进入"错题本"，按题型和错误原因分类</li>
+<li>用简化版间隔重复（不必完整FSRS，用1天/3天/7天/14天梯度）调度复习</li>
+<li>复习时显示原题 + 文章出处 + 当时的错误原因，遮答案重做</li>
+<li>连续答对2次标记"已掌握"，移出复习队列</li>
+</ul>
+<p><b>工具栏显示</b>：当前"复习生词（文库）"旁边加"复习错题（N道）"。</p>
+
+<h4><span class="priority pr-1">P1</span> 完形填空练习生成</h4>
+<p><b>借鉴</b>：考研完形题型 + Duolingo 自动出题</p>
+<p><b>实现</b>：从10篇文章中自动挖空生成完形练习：</p>
+<ul>
+<li>选择文章中的实词（动词/名词/形容词/副词）作为空</li>
+<li>每空提供4个选项（正确答案 + 3个干扰项，干扰项从同词性词汇中选）</li>
+<li>20空一篇，计时15分钟，仿真实考试</li>
+<li>做完后显示每空的上下文逻辑分析</li>
+</ul>
+<p><b>技术要点</b>：挖空算法优先选择考研高频词，干扰项选择语义相近但搭配不同的词。</p>
+
+<h4><span class="priority pr-1">P1</span> 考试成绩雷达图</h4>
+<p><b>借鉴</b>：研英真题通的能力雷达</p>
+<p><b>实现</b>：按6大题型统计正确率，生成雷达图（完形/阅读A/新题型/翻译/小作文/大作文），直观显示薄弱项。数据存在 <code>exam:stats</code>。</p>
+</div>
+
+<!-- 5.3 写作工坊 -->
+<div class="card p0">
+<h3>5.3 写作工坊：从"素材堆积"到"写作输出"</h3>
+
+<h4><span class="priority pr-0">P0</span> 大作文框架模板系统</h3>
+<p><b>借鉴</b>：考研大作文三段式（图画描述→寓意揭示→观点论证）+ 扇贝考研的逻辑结构评分</p>
+<p><b>实现</b>：写作工坊增加"大作文"Tab，提供三段式框架：</p>
+<table>
+<tr><th>段落</th><th>功能</th><th>可调用素材</th><th>常用句式</th></tr>
+<tr><td>第一段</td><td>图画描述</td><td>—</td><td>As is vividly depicted in the picture...</td></tr>
+<tr><td>第二段</td><td>寓意揭示 + 论证</td><td>写作素材（起因/经过/逻辑）、建议文论点</td><td>The picture implicitly reflects...</td></tr>
+<tr><td>第三段</td><td>观点 + 建议</td><td>同义词替换表、高级表达</td><td>From my perspective...</td></tr>
+</table>
+<p>用户在框架中填写内容时，右侧显示可拖拽插入的素材卡片（从10篇文章积累的）。</p>
+
+<h4><span class="priority pr-0">P0</span> 小作文应用文模板库</h4>
+<p><b>借鉴</b>：考研小作文10种应用文（书信/通知/告示/备忘录等）</p>
+<p><b>实现</b>：内置10种应用文模板框架，每种包含：</p>
+<ul>
+<li>格式要求（称呼/正文/落款的位置）</li>
+<li>开头/结尾套话库（从10篇文章的正式表达中提取）</li>
+<li>用户填写的历史作文（自动保存+版本历史）</li>
+</ul>
+
+<h4><span class="priority pr-1">P1</span> 默写模式（中译英）</h4>
+<p><b>借鉴</b>：TypeWords 默写模式 + 翻译题反向训练</p>
+<p><b>实现</b>：从长难句/写作素材中选择句子，显示中文译文，用户输入英文，系统逐词比对：</p>
+<ul>
+<li>正确词 = 绿色，错误词 = 红色，漏词 = 黄色下划线</li>
+<li>拼写错误的词自动加入"错词本"</li>
+<li>完成后显示原文对照，标记差异</li>
+</ul>
+<p><b>价值</b>：这是从"被动读"到"主动写"的关键跨越，直接服务翻译和写作。</p>
+
+<h4><span class="priority pr-1">P1</span> 素材与文章的双向溯源</h4>
+<p><b>借鉴</b>：MarginNote 卡片始终绑定来源段落</p>
+<p><b>实现</b>：每条写作素材/长难句/词根都记录 <code>sourceArticleId</code> + <code>sourceParaIndex</code> + <code>sourceText</code>。在写作工坊查看素材时，一键"回原文"跳转到对应文章的对应段落并高亮。</p>
+
+<h4><span class="priority pr-2">P2</span> 作文自评清单</h4>
+<p>用户写完作文后，提供考研评分维度的自评清单：</p>
+<ul>
+<li>内容完整性（是否覆盖提纲要点）</li>
+<li>语法准确性（时态/主谓一致/冠词）</li>
+<li>词汇多样性（是否有重复词，可用替换表检查）</li>
+<li>句式多样性（是否有复合句/倒装/强调）</li>
+<li>衔接连贯性（过渡词是否充足）</li>
+</ul>
+<p>每项打分后生成总分和改进建议。</p>
+</div>
+
+<!-- 5.4 跨文章数据打通 -->
+<div class="card p1">
+<h3>5.4 跨文章数据打通：10篇不是孤岛</h3>
+
+<h4><span class="priority pr-0">P0</span> 全局词汇网络</h4>
+<p><b>借鉴</b>：MarginNote 双向链接 + 刷刷题"多维词网"</p>
+<p><b>实现</b>：</p>
+<ul>
+<li>同一个词在多篇文章中出现时，自动建立跨文章关联</li>
+<li>生词详情页显示："这个词在文章A（第3段）、文章C（第5段）中出现过"</li>
+<li>点击可跳转对应文章对应位置</li>
+<li>词根卡片自动关联包含该词根的所有已学生词</li>
+</ul>
+<p><b>数据结构</b>：<code>vocab:index</code> 全局索引，<code>{ word: [{articleId, paraIndex, context}] }</code></p>
+
+<h4><span class="priority pr-1">P1</span> 跨文章写作素材库</h4>
+<p>写作工坊的"全部"Tab 已经混合展示所有来源，但需要增强：</p>
+<ul>
+<li>按主题分类（如"AI"、"经济"、"社会"），10篇文章的素材自动聚类</li>
+<li>写大作文时，按主题筛选可用论据</li>
+<li>素材卡片显示来源文章标签，可点击溯源</li>
+</ul>
+
+<h4><span class="priority pr-1">P1</span> 10篇文章学习进度总览</h4>
+<p>新增"学习中心"页面（或Hub页面增强），显示：</p>
+<table>
+<tr><th>文章</th><th>阅读进度</th><th>生词数</th><th>长难句</th><th>写作素材</th><th>考试正确率</th><th>错题数</th></tr>
+<tr><td>AI成本</td><td>精读完成</td><td>23</td><td>5</td><td>8</td><td>75%</td><td>3</td></tr>
+<tr><td>AI监管</td><td>阅读中</td><td>15</td><td>3</td><td>4</td><td>60%</td><td>5</td></tr>
+</table>
+<p>全局进度条 + 今日复习提醒（生词+错题+长难句）。</p>
+</div>
+
+<!-- 5.5 技术架构改进 -->
+<div class="card p2">
+<h3>5.5 技术架构改进</h3>
+
+<h4><span class="priority pr-1">P1</span> 笔记历史改用 Delta 增量存储</h4>
+<p><b>借鉴</b>：Grammarly Delta 格式（insert/delete/retain）</p>
+<p><b>当前问题</b>：每次保存存全文，10版历史 = 10份全文，浪费空间。</p>
+<p><b>改进</b>：历史版本只存与上一版的差异（Delta操作序列），恢复时从最新版反向应用。节省80%+存储空间。</p>
+
+<h4><span class="priority pr-1">P1</span> localStorage 容量管理增强</h4>
+<p>当前已有容量预警，但需要更主动的管理：</p>
+<ul>
+<li>按数据类型显示占用排行（标注/概要/翻译/写作素材/考试记录）</li>
+<li>一键清理旧文章的概要/翻译缓存（这些可以从HTML重新加载）</li>
+<li>超过80%时自动提示导出备份</li>
+</ul>
+
+<h4><span class="priority pr-2">P2</span> 数据导入导出</h4>
+<p><b>借鉴</b>：TypeWords 的 JSON 导入导出</p>
+<p>一键导出全部学习数据（生词/长难句/素材/笔记/考试记录/错题）为单个JSON文件，支持在其他设备导入恢复。</p>
+
+<h4><span class="priority pr-2">P2</span> 练习类型配置化</h4>
+<p><b>借鉴</b>：Duolingo SDUI 的练习数据驱动</p>
+<p>将考试题目抽象为 JSON 配置（type/passage/questions/options/answer/explanation），新增题型只需加配置，不改渲染代码。当前已经部分实现，可以进一步统一完形/阅读/新题型/翻译的数据结构。</p>
+</div>
+
+<!-- 5.6 优先级总表 -->
+<div class="card">
+<h3>5.6 改进优先级总表</h3>
+<table>
+<tr><th>优先级</th><th>改进项</th><th>所属模块</th><th>借鉴来源</th><th>工作量</th><th>直接提分</th></tr>
+<tr><td><span class="priority pr-0">P0</span></td><td>原文可视化标注（生词/长难句/素材下划线）</td><td>阅读</td><td>Grammarly</td><td>中</td><td>阅读+写作</td></tr>
+<tr><td><span class="priority pr-0">P0</span></td><td>段落功能标签系统</td><td>阅读</td><td>精读方法论</td><td>小</td><td>新题型+阅读</td></tr>
+<tr><td><span class="priority pr-0">P0</span></td><td>错题归因系统</td><td>考试</td><td>考研复盘法</td><td>中</td><td>阅读40分</td></tr>
+<tr><td><span class="priority pr-0">P0</span></td><td>错题本+间隔重复</td><td>考试</td><td>MarginNote FSRS</td><td>中</td><td>全题型</td></tr>
+<tr><td><span class="priority pr-0">P0</span></td><td>大作文框架模板</td><td>写作</td><td>考研写作</td><td>中</td><td>大作文20分</td></tr>
+<tr><td><span class="priority pr-0">P0</span></td><td>小作文应用文模板库</td><td>写作</td><td>考研写作</td><td>小</td><td>小作文10分</td></tr>
+<tr><td><span class="priority pr-0">P0</span></td><td>全局词汇网络（跨文章关联）</td><td>数据</td><td>MarginNote</td><td>中</td><td>完形+阅读</td></tr>
+<tr><td><span class="priority pr-1">P1</span></td><td>同义词替换表</td><td>阅读</td><td>精读方法论</td><td>小</td><td>写作</td></tr>
+<tr><td><span class="priority pr-1">P1</span></td><td>长难句主干标注工具</td><td>阅读</td><td>奇速英语</td><td>大</td><td>翻译10分</td></tr>
+<tr><td><span class="priority pr-1">P1</span></td><td>完形填空自动生成</td><td>考试</td><td>Duolingo</td><td>大</td><td>完形10分</td></tr>
+<tr><td><span class="priority pr-1">P1</span></td><td>默写模式（中译英）</td><td>写作</td><td>TypeWords</td><td>中</td><td>翻译+写作</td></tr>
+<tr><td><span class="priority pr-1">P1</span></td><td>素材双向溯源</td><td>写作</td><td>MarginNote</td><td>小</td><td>写作</td></tr>
+<tr><td><span class="priority pr-1">P1</span></td><td>考试成绩雷达图</td><td>考试</td><td>研英真题通</td><td>小</td><td>全题型</td></tr>
+<tr><td><span class="priority pr-1">P1</span></td><td>跨文章素材主题聚类</td><td>数据</td><td>—</td><td>中</td><td>写作</td></tr>
+<tr><td><span class="priority pr-1">P1</span></td><td>笔记历史Delta增量存储</td><td>技术</td><td>Grammarly</td><td>中</td><td>—</td></tr>
+<tr><td><span class="priority pr-2">P2</span></td><td>理解偏差标注</td><td>阅读</td><td>精读方法论</td><td>小</td><td>阅读</td></tr>
+<tr><td><span class="priority pr-2">P2</span></td><td>作文自评清单</td><td>写作</td><td>扇贝考研</td><td>小</td><td>写作</td></tr>
+<tr><td><span class="priority pr-2">P2</span></td><td>10篇文章学习总览</td><td>数据</td><td>—</td><td>中</td><td>—</td></tr>
+<tr><td><span class="priority pr-2">P2</span></td><td>数据导入导出JSON</td><td>技术</td><td>TypeWords</td><td>小</td><td>—</td></tr>
+<tr><td><span class="priority pr-3">P3</span></td><td>AI作文批改（需后端/API）</td><td>写作</td><td>扇贝/有道</td><td>大</td><td>写作</td></tr>
+<tr><td><span class="priority pr-3">P3</span></td><td>连续学习天数+积累进度条</td><td>数据</td><td>Duolingo</td><td>小</td><td>—</td></tr>
+</table>
+</div>
+
+<!-- ============ 第六部分：实施路线图 ============ -->
+<h2>六、建议实施路线图</h2>
+
+<div class="card">
+<h3>第一阶段：补全应试闭环（1-2周）</h3>
+<p>目标：让考试模式从"做题"变成"做题→归因→复习"的完整闭环，同时补全写作30分的框架支撑。</p>
+<ul>
+<li>P0: 错题归因系统 + 错题本间隔重复</li>
+<li>P0: 大作文框架模板 + 小作文应用文模板库</li>
+<li>P0: 原文可视化标注（已存内容下划线）</li>
+<li>P0: 全局词汇网络（跨文章关联）</li>
+</ul>
+
+<h3>第二阶段：深化精读能力（2-3周）</h3>
+<p>目标：让阅读模式真正实现"结构解码+语言攻坚"的精读方法论。</p>
+<ul>
+<li>P0: 段落功能标签系统</li>
+<li>P1: 同义词替换表</li>
+<li>P1: 长难句主干标注工具</li>
+<li>P1: 默写模式（中译英）</li>
+<li>P1: 素材双向溯源</li>
+</ul>
+
+<h3>第三阶段：扩展题型与数据（3-4周）</h3>
+<p>目标：覆盖完形填空，完善数据分析和技术架构。</p>
+<ul>
+<li>P1: 完形填空自动生成</li>
+<li>P1: 考试成绩雷达图</li>
+<li>P1: 跨文章素材主题聚类</li>
+<li>P1: 笔记历史Delta增量存储</li>
+<li>P2: 10篇文章学习总览 + 数据导入导出</li>
+</ul>
+</div>
+
+<!-- ============ 核心洞察 ============ -->
+<div class="conclusion">
+<h3>核心洞察</h3>
+<ol>
+<li><b>10篇文章是资产，不是孤岛</b>：当前每篇文章的数据独立存储，但考研能力是跨文章积累的。全局词汇网络、跨文章素材聚类、学习总览是把10篇变成"一套教材"的关键。</li>
+<li><b>阅读积累必须服务于考试输出</b>：阅读模式存的生词/长难句/素材，如果不能在考试模式和写作中直接调用，就是无效积累。原文标注+素材溯源+默写模式是打通"输入→输出"的桥梁。</li>
+<li><b>错题比新题更有价值</b>：考研提分的核心不是刷更多题，而是把错题彻底搞懂。错题归因+间隔重复是从"刷题机器"到"考点预判者"的关键。</li>
+<li><b>写作30分是最大增量空间</b>：当前写作工坊只有素材积累，缺少输出框架。大作文三段式模板+小作文应用文模板+默写模式，可以快速补上30分的产品支撑。</li>
+<li><b>纯前端架构完全够用</b>：MarginNote和TypeWords证明了local-first方案的可行性。FSRS、Delta、错题归因都不需要后端，关键是数据结构设计要合理。</li>
+</ol>
+</div>
+
+<div style="text-align:center; color:#a0aec0; margin-top:50px; font-size:13px;">
+  报告生成于 2026-09-24 ｜ 信息来源：Duolingo/Grammarly/MarginNote官方工程博客、考研英语大纲、新东方/奇速英语精读方法论、扇贝考研/有道写作产品分析
+</div>
+
+</body>
+</html>
