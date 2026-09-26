@@ -1,4 +1,31 @@
 ﻿(function() {
+  // ===== 资源版本戳 =====
+  // reader.js 由 <script src="reader.js?v=..."> 引入。在解析期把它自己的 ?v= 记下来，
+  // 供之后动态插入的懒加载脚本（exam-panel.js / wordfreq.js）复用。
+  // 否则这两个文件的改动永远不会失效浏览器缓存 —— 典型「改了代码但页面还是旧的」。
+  const ASSET_V = (function() {
+    try {
+      const s = document.currentScript ||
+        document.querySelector('script[src*="reader.js"]');
+      const m = s && s.src && s.src.match(/[?&]v=([^&#]+)/);
+      return m ? '?v=' + m[1] : '';
+    } catch (e) { return ''; }
+  })();
+
+  // ===== 文章元数据（唯一 ID 来源，取代旧 EXAM_SLUGS「文件名 → slug」硬编码映射表）=====
+  // 文章 <body> 上的 data-edition / data-has-exam / data-exam-types 由构建脚本写入，
+  // 与每篇配色（reader.css 的 body[data-edition=...]）共用同一份数据。
+  // 这样新增文章只需写对 HTML 属性，无需改任何 JS、无需重新维护映射表。
+  const articleMeta = (function() {
+    const ds = (document.body && document.body.dataset) || {};
+    return {
+      slug: (ds.edition || '').trim(),                 // 栏目 ID（如 ai_cost），用于考试/练习页寻址
+      hasExam: ds.hasExam === 'true',                  // 是否显示「考试」菜单（缺失即不显示）
+      examTypes: (ds.examTypes || '').split(',').map(s => s.trim()).filter(Boolean)
+    };
+  })();
+  // 注意：articleId 是 localStorage key 后缀，语义恒为「页面文件名（含 .html）」。
+  // 它决定存量标注 / 概要 / 翻译 / 阅读记录的归属，改动会导致数据失联，故保持不变。
   const articleId = location.pathname.split('/').pop() || 'article';
   const ANNO_KEY = 'annotations:' + articleId;
   const SUM_KEY = 'summary:' + articleId;
@@ -7,7 +34,10 @@
   let annotations = [];
   let summaryData = {};
   let translationData = {};
-  let settings = { theme: 'green', fontSize: 16, showSummary: true, showCN: true, showNotes: true, showHeader: true, mobileMode: 'both' };
+  let settings = { theme: 'green', fontSize: 16, showSummary: true, showCN: true, showNotes: true, showHeader: true, mobileMode: 'both',
+    view: 'paper',         // 阅读模式默认就是报纸版（'reader' 可切回三栏对照）
+    paperCn: true,         // 报纸版是否显示中文对照页
+    paperFont: 16.5 };     // 报纸版正文字号
   let initializing = true; // UX-5: suppress operation toasts during first load
   const mobileQuery = window.matchMedia ? window.matchMedia('(max-width: 860px)') : { matches: false }; // UX-3/UX-6
 
@@ -100,7 +130,7 @@
     if (_examLoading) return _examLoading;
     _examLoading = new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = 'exam-panel.js';
+      s.src = 'exam-panel.js' + ASSET_V;
       s.onload = () => resolve(window.__exam);
       s.onerror = () => { _examLoading = null; reject(new Error('exam-panel.js failed to load')); };
       document.head.appendChild(s);
@@ -131,16 +161,21 @@
   }
   function applyLayout() {
     const w = document.querySelector('.main-wrap');
+    if (!w) return;                       // 页面骨架缺失时不再抛 TypeError（保持与其它分支一致的容错）
     w.classList.toggle('no-summary', !settings.showSummary);
     w.classList.toggle('no-cn', !settings.showCN);
-    document.getElementById('toggle-summary-btn').classList.toggle('active', settings.showSummary);
-    document.getElementById('toggle-cn-btn').classList.toggle('active', settings.showCN);
+    const sumBtn = document.getElementById('toggle-summary-btn');
+    if (sumBtn) sumBtn.classList.toggle('active', settings.showSummary);
+    const cnBtn = document.getElementById('toggle-cn-btn');
+    if (cnBtn) cnBtn.classList.toggle('active', settings.showCN);
     const notesBtn = document.getElementById('toggle-notes-btn');
     if (notesBtn) notesBtn.classList.toggle('active', settings.showNotes);
     const hdr = document.querySelector('.header');
     if (hdr) hdr.classList.toggle('collapsed', !settings.showHeader);
     const hdrBtn = document.getElementById('toggle-header-btn');
     if (hdrBtn) hdrBtn.classList.toggle('active', settings.showHeader);
+    // 报纸阅读页有自己的一套版面容器，显隐要同步过去
+    if (typeof paperApplyLayout === 'function') paperApplyLayout();
   }
   function toggleSummary() { settings.showSummary = !settings.showSummary; saveSettings(); applyLayout(); showTopToast(settings.showSummary ? '概要列已显示' : '概要列已隐藏'); setTimeout(() => window.__resyncScroll && window.__resyncScroll(), 50); }
   function toggleCN() { settings.showCN = !settings.showCN; saveSettings(); applyLayout(); showTopToast(settings.showCN ? '中文列已显示' : '中文列已隐藏'); setTimeout(() => window.__resyncScroll && window.__resyncScroll(), 50); }
@@ -307,13 +342,16 @@
   }
 
   // ===== Annotations =====
-  // Bucket: 'vocab' (生词本, includes vocab+unclear) | 'note' (笔记, includes note)
-  // Vocab is the most-used feature so it gets its own panel; notes is separate.
+  // Bucket: 'vocab'（生词本）| 'note'（笔记）| 'misread'（理解偏差，F16）| 'qtype'（题型）
+  // 'paraFunc'（段落功能，F02）不是文本标注，是段落级元数据，渲染与计数都要排除它。
+  // ⚠ type → bucket 的映射只能在这里做：addAnnotation 是浮动菜单所有普通标注的唯一入口，
+  //   漏一个 type 就会被默认归到 vocab（曾导致「理解偏差」进了生词本）。
+  const ANNOTATION_BUCKETS = { note: 'note', misread: 'misread', vocab: 'vocab' };
   function addAnnotation(type, text, context, note, source, paraIdx, line) {
     if (!text || !text.trim()) return;
     const dup = annotations.find(a => a.text === text && a.source === source);
     if (dup) { flashNote(dup.id); return; }
-    const bucket = (type === 'note') ? 'note' : 'vocab';
+    const bucket = ANNOTATION_BUCKETS[type] || 'vocab';
     const ann = {
       id: genId(), type, bucket, text: text.trim(), context: context || '',
       note: note || '', source: source || 'en', paraIdx: paraIdx || '',
@@ -540,12 +578,15 @@
     const vocabCount = annotations.filter(a => a.bucket === 'vocab').length;
     const noteCount = annotations.filter(a => a.bucket === 'note').length;
     const qtypeCount = annotations.filter(a => a.bucket === 'qtype').length;
+    const misreadCount = annotations.filter(a => a.bucket === 'misread').length;
     const sessionCount = (readingData.sessions || []).length;
+    const allCount = annotations.filter(a => a.bucket !== 'paraFunc').length;
     let tabsHtml = `<div class="notes-tabs">
       <button data-notes-bucket="vocab" class="${notesBucket === 'vocab' ? 'active' : ''}">📖 生词本 ${vocabCount > 0 ? '(' + vocabCount + ')' : ''}</button>
       <button data-notes-bucket="note" class="${notesBucket === 'note' ? 'active' : ''}">📝 笔记 ${noteCount > 0 ? '(' + noteCount + ')' : ''}</button>
       <button data-notes-bucket="qtype" class="${notesBucket === 'qtype' ? 'active' : ''}">🎓 题型 ${qtypeCount > 0 ? '(' + qtypeCount + ')' : ''}</button>
-      <button data-notes-bucket="all" class="${notesBucket === 'all' ? 'active' : ''}">全部 ${annotations.length > 0 ? '(' + annotations.length + ')' : ''}</button>
+      <button data-notes-bucket="misread" class="${notesBucket === 'misread' ? 'active' : ''}" title="阅读时读错、译错、想岔的地方 —— 这些是最高价值的复习点">🌀 理解偏差 ${misreadCount > 0 ? '(' + misreadCount + ')' : ''}</button>
+      <button data-notes-bucket="all" class="${notesBucket === 'all' ? 'active' : ''}">全部 ${allCount > 0 ? '(' + allCount + ')' : ''}</button>
       <button data-notes-bucket="timeline" class="${notesBucket === 'timeline' ? 'active' : ''}">⏰ 时间表 ${sessionCount > 0 ? '(' + sessionCount + ')' : ''}</button>
     </div>
     <div class="notes-jump-nav">
@@ -590,7 +631,10 @@
       return;
     }
     // Filter by bucket
-    const bucketAnns = notesBucket === 'all' ? annotations : annotations.filter(a => a.bucket === notesBucket);
+    // ⚠ paraFunc（段落功能标签）是**段落级**的元数据，不是文本标注：
+    //   它没有选中文本、不该出现在标注列表里，由「工具 → 段落功能标签」面板单独管理。
+    const visibleAnns = annotations.filter(a => a.bucket !== 'paraFunc');
+    const bucketAnns = notesBucket === 'all' ? visibleAnns : visibleAnns.filter(a => a.bucket === notesBucket);
     if (bucketAnns.length === 0) {
       list.innerHTML = tabsHtml + `<div class="empty-hint">${notesBucket === 'vocab' ? '生词本' : '笔记'}还是空的。<br>选中文本 → 选类型 → 标注会出现在这里。</div>`;
       list.querySelectorAll('[data-notes-bucket]').forEach(btn => {
@@ -610,7 +654,7 @@
       updateJumpNav();
       return;
     }
-    const typeName = { vocab: '📖 生词', unclear: '❓ 不懂', note: '💡 备注' };
+    const typeName = { vocab: '📖 生词', unclear: '❓ 不懂', note: '💡 备注', misread: '🌀 理解偏差' };
     const sorted = filtered.slice().sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
     const groups = groupByDate(sorted);
     let cardsHtml = '';
@@ -711,7 +755,11 @@
   }
   function updateNoteCount() {
     const el = document.getElementById('note-count');
-    if (el) el.textContent = annotations.length > 0 ? annotations.length : '';
+    // 与笔记面板的「全部」页签保持一致：段落功能标签是段落级元数据，不计入标注条数
+    if (el) {
+      const n = annotations.filter(a => a.bucket !== 'paraFunc').length;
+      el.textContent = n > 0 ? n : '';
+    }
   }
 
   // ===== FEATURE: Notes-panel search (标注内容过滤，跨所有 tab) =====
@@ -823,6 +871,12 @@
     document.querySelectorAll('.col-body p[data-para-idx], .col-body blockquote, .para-summary-item .en-sum, .para-summary-item .cn-sum').forEach(el => { el.style.minHeight = ''; });
   }
   function doHeightSync(force) {
+    // 报纸阅读页：每版由分版算法独立排版，跨列强行等高既不适用、又会污染分版测量
+    if (typeof paperIsOpen === 'function' && paperIsOpen()) {
+      clearForcedHeights();
+      lastSyncedWidth = -1;
+      return;
+    }
     // Mobile single-column layout needs no cross-column alignment
     if (mobileQuery.matches) {
       clearForcedHeights();
@@ -864,6 +918,8 @@
     let syncing = false;
     function syncTo(src, dst) {
       if (syncing || jumpInProgress) return;
+      // 报纸阅读页：EN / CN 是同一版的对开两页，不存在独立纵向滚动，同步无意义
+      if (typeof paperIsOpen === 'function' && paperIsOpen()) return;
       // Find topmost visible paragraph in src (in viewport coords)
       const paragraphs = src.querySelectorAll('p[data-para-idx]');
       let topP = null;
@@ -892,6 +948,11 @@
     cn.addEventListener('scroll', () => syncTo(cn, en), { passive: true });
     // Expose for re-sync after layout changes
     window.__resyncScroll = () => {
+      // 报纸阅读页靠重新分版响应布局变化（字号 / 栏宽变了，版次边界也要重算）
+      if (typeof paperIsOpen === 'function' && paperIsOpen()) {
+        if (typeof window.__paperRepaginate === 'function') window.__paperRepaginate();
+        return;
+      }
       doHeightSync(true);
       en.dispatchEvent(new Event('scroll'));
     };
@@ -915,7 +976,12 @@
         { act: 'qtype-toggle', icon: '🎯', title: '题型标注' },
         { act: 'syntax', icon: '🧩', title: '长难句拆解' },
         { act: 'material', icon: '✍️', title: '写作素材' },
-        { act: 'root', icon: '🌱', title: '记入词根库' }
+        { act: 'root', icon: '🌱', title: '记入词根库' },
+        // F16：把「我读错了」也当成一种标注 —— 它和生词一样是复习材料，
+        // 但语义是「理解偏差」，bucket 独立，笔记面板有单独页签
+        { act: 'misread', icon: '🌀', title: '理解偏差（我读错了）' },
+        // F08：选中一个词 → 记它的同义替换（写作时直接用）
+        { act: 'synonym', icon: '🔁', title: '同义替换' }
       ].forEach(x => {
         const b = document.createElement('button');
         b.dataset.act = x.act;
@@ -1089,13 +1155,17 @@
             const qrow = document.getElementById('float-qrow');
             if (qrow) qrow.classList.toggle('open');
           } else if (act === 'syntax') {
-            loadExamPanel().then(E => E.openSyntaxPanel(info.text));
+            loadExamPanel().then(E => E.openSyntaxPanel(info.text, info.paraIdx));
             window.getSelection().removeAllRanges(); hideMenu();
           } else if (act === 'material') {
-            loadExamPanel().then(E => E.openMaterialPanel(info.text));
+            loadExamPanel().then(E => E.openMaterialPanel(info.text, info.paraIdx));
             window.getSelection().removeAllRanges(); hideMenu();
           } else if (act === 'root') {
-            loadExamPanel().then(E => E.openRootPanel(info.text));
+            loadExamPanel().then(E => E.openRootPanel(info.text, info.paraIdx));
+            window.getSelection().removeAllRanges(); hideMenu();
+          } else if (act === 'synonym') {
+            // F08：写作工坊的「同义替换」页签。走 window.__exam 桥（面板在 exam-panel.js 里）
+            loadExamPanel().then(E => E.openSynonymPanel && E.openSynonymPanel(info.text));
             window.getSelection().removeAllRanges(); hideMenu();
           } else {
             addAnnotation(act, info.text, info.context, '', info.source, info.paraIdx, info.line);
@@ -1215,8 +1285,7 @@
     }));
   }
   function exportMarkdown() {
-    const title = document.querySelector('.title-block h1:not(.cn)')?.textContent || 'article';
-    const cnTitle = document.querySelector('.title-block h1.cn')?.textContent || '';
+    const title = document.querySelector('.title-block h1:not(.cn)')?.textContent || 'article';    const cnTitle = document.querySelector('.title-block h1.cn')?.textContent || '';
     const enAuthor = document.querySelector('.title-block .author:not(.cn)')?.textContent || '';
     const cnAuthor = document.querySelector('.title-block .author.cn')?.textContent || '';
     const thesis = collectThesis();
@@ -1266,8 +1335,9 @@
       });
     }
     const md = lines.join('\n');
-    downloadFile(`${title} - notes.md`, md, 'text/markdown;charset=utf-8');
-    showTopToast('已导出');
+    saveFile(`${title} - notes.md`, md, 'text/markdown;charset=utf-8').then(r => {
+      showTopToast(saveResultToast(r), r.where === 'folder' ? 3000 : 7000);
+    });
   }
   function exportJson() {
     const data = {
@@ -1279,11 +1349,10 @@
       annotations: annotations,
       exportedAt: new Date().toISOString(),
     };
-    downloadFile(
-      (data.title || 'article') + ' - notes.json',
-      JSON.stringify(data, null, 2), 'application/json;charset=utf-8'
-    );
-    showTopToast('已导出');
+    saveFile((data.title || 'article') + ' - notes.json',
+      JSON.stringify(data, null, 2), 'application/json;charset=utf-8').then(r => {
+      showTopToast(saveResultToast(r), r.where === 'folder' ? 3000 : 7000);
+    });
   }
   // ===== FEATURE: 生词 CSV 导出（Anki / Excel 可直接导入）=====
   function csvField(s) {
@@ -1306,8 +1375,10 @@
     // \ufeff BOM：让 Excel 正确识别 UTF-8 中文；\r\n：Anki/Excel 的通用行尾
     const csv = '\ufeff' + rows.join('\r\n');
     const name = 'vocab-' + backupStamp() + '.csv';
-    downloadFile(name, csv, 'text/csv;charset=utf-8');
-    showTopToast('已导出 ' + sorted.length + ' 个生词 → ' + name + '（Anki/Excel 可导入）');
+    saveFile(name, csv, 'text/csv;charset=utf-8').then(r => {
+      showTopToast(saveResultToast(r, '已导出 ' + sorted.length + ' 个生词') +
+        (r.where === 'folder' ? '' : '（Anki/Excel 可导入）'), r.where === 'folder' ? 3200 : 7000);
+    });
   }
   function extractVocab() {
     const todayStr = fmtDate(new Date().toISOString());
@@ -1371,7 +1442,7 @@
     if (!confirm('清空本篇所有数据（标注/概要/翻译/设置/阅读记录/句库/考试记录）？其他文章不受影响。')) return;
     const keys = [ANNO_KEY, SUM_KEY, TRANS_KEY, SETTINGS_KEY, READING_KEY,
       'syntax:' + articleId, 'wsj_reader:crossref:' + articleId];
-    const slug = EXAM_SLUGS[articleId];
+    const slug = articleMeta.slug;
     if (slug) ['examhl:', 'examq:', 'examtimer:', 'examlimit:'].forEach(p => keys.push(p + slug));
     keys.forEach(k => localStorage.removeItem(k));
     showTopToast('已清空本篇数据');
@@ -1391,19 +1462,23 @@
     };
     return freqSets;
   }
+  let _wfLoading = null;
   function ensureWordFreq(cb) {
     if (window.__WORD_FREQ__) { cb(); return; }
+    if (_wfLoading) { _wfLoading.push(cb); return; }   // 并发调用不再重复插 <script>
+    _wfLoading = [cb];
     const s = document.createElement('script');
-    s.src = 'wordfreq.js';
-    s.onload = cb;
-    s.onerror = () => showTopToast('词频数据加载失败（缺少 wordfreq.js）');
+    s.src = 'wordfreq.js' + ASSET_V;                    // 复用 reader.js 的版本戳，避免旧缓存
+    s.onload = () => { const cbs = _wfLoading; _wfLoading = null; cbs.forEach(f => f()); };
+    s.onerror = () => { _wfLoading = null; showTopToast('词频数据加载失败（缺少 wordfreq.js）'); };
     document.head.appendChild(s);
   }
   function freqModeOn() { return localStorage.getItem(FREQ_MODE_KEY) === '1'; }
   function applyFreqColoring() {
     const sets = buildFreqSets();
-    const body = document.querySelector('.col-body.en');
-    if (!sets || !body) return null;
+    // 报纸阅读页里每一版都有自己的 .col-body.en —— 必须遍历全部，否则只着色第一版
+    const bodies = document.querySelectorAll('.col-body.en');
+    if (!sets || !bodies.length) return null;
     const counts = { h: 0, m: 0, l: 0, x: 0, v: 0 };
     // 已录入生词本的词：优先于词频分级，标成 freq-v（金色），阅读时一眼可辨。
     // 注意：与标注原文完全一致的词已被 <mark> 高亮（walker 会跳过 mark），
@@ -1433,6 +1508,7 @@
         }
       });
     } catch (e) {}
+    bodies.forEach(body => {
     const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
         let p = node.parentNode;
@@ -1478,6 +1554,7 @@
       }
       if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
       tn.parentNode.replaceChild(frag, tn);
+    });
     });
     return counts;
   }
@@ -1587,6 +1664,8 @@
         });
       } catch (e) {}
     }
+    // 错题本也计入「今日待复习」——错题是按间隔重复排期的（调度在 11-insights.js）
+    if (typeof dueWrongCount === 'function') n += dueWrongCount();
     return n;
   }
   function attendanceData() {
@@ -1808,11 +1887,18 @@
 
   // ===== Reading progress bar =====
   function updateProgressBar() {
-    let scroller = document.querySelector('.col-body.en');
+    const bar = document.getElementById('progress-bar');
+    // 报纸阅读页：进度 = 版次进度（页面本身不纵向滚动）
+    if (typeof paperIsOpen === 'function' && paperIsOpen()) {
+      const total = (typeof paperPageCount === 'function') ? paperPageCount() : 0;
+      const cur = (typeof paperPageIndex === 'function') ? paperPageIndex() : 0;
+      if (bar) bar.style.width = total > 0 ? Math.round((cur + 1) / total * 100) + '%' : '0%';
+      return;
+    }
+    let scroller = document.querySelector('.main-wrap .col-body.en') || document.querySelector('.col-body.en');
     if (mobileQuery.matches) scroller = document.querySelector('.main-wrap') || scroller;
     if (!scroller) return;
     const pct = scroller.scrollTop / Math.max(1, scroller.scrollHeight - scroller.clientHeight) * 100;
-    const bar = document.getElementById('progress-bar');
     if (bar) bar.style.width = Math.min(100, Math.max(0, pct)) + '%';
   }
 
@@ -2366,10 +2452,15 @@
   function updateTimerDisplay() {
     const se = document.getElementById('session-timer');
     const te = document.getElementById('total-timer');
-    if (se) se.textContent = '⏱ ' + fmtTime(sessionSeconds);
-    if (te) te.textContent = '📊 ' + fmtTime(readingData.totalSeconds);
-    if (se) se.title = '本次阅读时长 ' + fmtTime(sessionSeconds);
-    if (te) te.title = '累计阅读时长 ' + fmtTime(readingData.totalSeconds);
+    // 只写时间本身，标签交给 CSS（报纸版读作「已读 / 累计」，三栏视图读作 ⏱ / 📊）
+    if (se) {
+      se.textContent = fmtTime(sessionSeconds);
+      se.title = '本次阅读时长 ' + fmtTime(sessionSeconds);
+    }
+    if (te) {
+      te.textContent = fmtTime(readingData.totalSeconds);
+      te.title = '累计阅读时长 ' + fmtTime(readingData.totalSeconds);
+    }
   }
   function startTimer() {
     if (timerInterval) return;
@@ -2404,16 +2495,22 @@
   }
 
   // --- Reading position ---
+  // 记录的是「段号 data-para-idx」而非位置序号 —— 报纸阅读页会把段落分到不同版，
+  // 位置序号会随分版结果漂移，段号才稳定。
   function getCurrentPosition() {
-    const enCol = document.querySelector('.col-body.en');
+    // 报纸阅读页：位置 = 当前版第一段的段号
+    if (typeof paperIsOpen === 'function' && paperIsOpen()) {
+      return (typeof paperCurrentParaIdx === 'function') ? paperCurrentParaIdx() : null;
+    }
+    const enCol = document.querySelector('.main-wrap .col-body.en') || document.querySelector('.col-body.en');
     if (!enCol) return null;
-    const paras = enCol.querySelectorAll('p');
+    const paras = enCol.querySelectorAll('p[data-para-idx]');
     if (paras.length === 0) return null;
     const colTop = enCol.getBoundingClientRect().top;
-    let best = 0;
-    paras.forEach((p, i) => {
+    let best = null;
+    paras.forEach((p) => {
       const rect = p.getBoundingClientRect();
-      if (rect.top <= colTop + 80) best = i;
+      if (rect.top <= colTop + 80) best = parseInt(p.dataset.paraIdx, 10);
     });
     return best;
   }
@@ -2450,18 +2547,30 @@
   function jumpToLastPosition() {
     loadReading();
     if (readingData.lastPosition === null) return;
-    const enCol = document.querySelector('.col-body.en');
+    // 报纸阅读页：先翻到含该段的那一版，再高亮该段
+    if (typeof paperIsOpen === 'function' && paperIsOpen()) {
+      const idx = readingData.lastPosition;
+      if (typeof window.paperGotoParaIdx === 'function') window.paperGotoParaIdx(idx);
+      const el = document.querySelector('.np-leaf-en p[data-para-idx="' + idx + '"]');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.style.outline = '2px solid var(--cn-tag)';
+        el.style.outlineOffset = '2px';
+        setTimeout(() => { el.style.outline = 'none'; }, 2500);
+      }
+      const bb = document.getElementById('bookmark-btn');
+      if (bb) bb.style.display = 'none';
+      return;
+    }
+    const enCol = document.querySelector('.main-wrap .col-body.en') || document.querySelector('.col-body.en');
     if (!enCol) return;
-    const paras = enCol.querySelectorAll('p');
-    const idx = Math.min(readingData.lastPosition, paras.length - 1);
-    if (paras[idx]) {
-      paras[idx].scrollIntoView({ behavior: 'smooth', block: 'start' });
-      paras[idx].style.outline = '2px solid var(--cn-tag)';
-      paras[idx].style.outlineOffset = '2px';
-      paras[idx].style.transition = 'outline 0.3s';
-      setTimeout(() => {
-        paras[idx].style.outline = 'none';
-      }, 2500);
+    const el = enCol.querySelector('p[data-para-idx="' + readingData.lastPosition + '"]');
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      el.style.outline = '2px solid var(--cn-tag)';
+      el.style.outlineOffset = '2px';
+      el.style.transition = 'outline 0.3s';
+      setTimeout(() => { el.style.outline = 'none'; }, 2500);
     }
     const btn = document.getElementById('bookmark-btn');
     if (btn) btn.style.display = 'none';
@@ -2473,8 +2582,19 @@
     'wsj_review:', 'wsj_reader:',
     'examq:', 'examtimer:', 'examlimit:', 'exammode:', 'exammark:', 'examansheet:', 'examhist:', 'examhl:', 'examsess:',
     'cz:', 'transq:', 'transtimer:', 'nt:'];
+  // ⚠ 新增独立键时**必须**加进这两个白名单，否则备份会静默漏掉它（不报错、只是丢数据）。
+  //   曾经就漏过——完形 / 新题型 / 翻译三个模块的错题库（wsj_cloze / wsj_newtype /
+  //   wsj_translation）一直是写了但没备份，错题本的 4 个库里只有 1 个进得了备份文件。
   const BACKUP_EXACT_KEYS = ['wsj_writing:materials', 'wsj_writing:advice', 'wsj_roots:cards',
-    'wsj_exam:wrongs', 'wsj_exam:overtime', 'wsj_exam:history', 'wsj_exam:theme'];
+    // 写作工坊：作文模板库 + 大小作文草稿 + 自由笔记（F05/F06/F17）+ 同义替换表（F08）
+    'wsj_writing:templates', 'wsj_writing:essays', 'wsj_writing:notes', 'wsj_writing:synonyms',
+    'wsj_exam:wrongs', 'wsj_exam:overtime', 'wsj_exam:history', 'wsj_exam:theme',
+    // 三个练习页自己的错题库（错题本会把它们和 wsj_exam:wrongs 合并成一张清单）
+    'wsj_cloze:wrongs', 'wsj_newtype:wrongs', 'wsj_translation:wrongs',
+    // 错题本的复习调度（间隔重复）—— 11-insights.js
+    'wsj_wrongrev',
+    // 中译英默写：每题成绩 + 错词本 —— 12-dictation.js
+    'wsj_dictation:stats', 'wsj_dictation:wrongs'];
   function collectAppKeys() {
     const keys = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -2487,8 +2607,35 @@
   // ---- 备份落盘：记住一个本机文件夹 → 之后一键写进去；不支持时降级为下载并讲清去向 ----
   const IDB_NAME = 'english-reader-files';
   const IDB_STORE = 'handles';
-  const BACKUP_LOG_KEY = '***';
-  const BACKUP_DIR_NAME_KEY = '***';
+  // ⚠ 这两个 key 历史上都被误写成同一个字面量 '***'：
+  //   * 「备份记录」与「备份文件夹名」互相覆盖——写一个就冲掉另一个；
+  //   * 与读取端 parseLS（走 JSON.parse）的约定不一致，文件夹名永远读不回来。
+  // 现改为独立 key，并做一次幂等抢救迁移。
+  const BACKUP_LOG_KEY = 'wsj_reader:backupLog';
+  const BACKUP_DIR_NAME_KEY = 'wsj_reader:backupDirName';
+  // 句柄没能存进 IndexedDB 时置位：这次会话能用，重启后还得重选。要如实告诉用户，
+  // 否则会出现「明明设过，下次又下载」这种静默失效。
+  const BACKUP_DIR_VOLATILE_KEY = 'wsj_reader:backupDirVolatile';
+  const BACKUP_LEGACY_KEY = '***';
+  (function migrateLegacyBackupKeys() {
+    let legacy = null;
+    try { legacy = localStorage.getItem(BACKUP_LEGACY_KEY); } catch (e) { return; }
+    if (!legacy) return;
+    let parsed = null, isJson = true;
+    try { parsed = JSON.parse(legacy); } catch (e) { isJson = false; }
+    try {
+      if (isJson && Array.isArray(parsed)) {
+        if (!localStorage.getItem(BACKUP_LOG_KEY)) localStorage.setItem(BACKUP_LOG_KEY, legacy);
+      } else {
+        // 旧代码写入文件夹名时没有 JSON.stringify，故非 JSON 的裸串也按文件夹名抢救
+        const name = (isJson && typeof parsed === 'string') ? parsed : (isJson ? null : legacy);
+        if (name && !localStorage.getItem(BACKUP_DIR_NAME_KEY)) {
+          localStorage.setItem(BACKUP_DIR_NAME_KEY, JSON.stringify(name));
+        }
+      }
+    } catch (e) {}
+    try { localStorage.removeItem(BACKUP_LEGACY_KEY); } catch (e) {}
+  })();
   function idbOpen() {
     return new Promise((resolve, reject) => {
       let req;
@@ -2514,26 +2661,125 @@
       rq.onerror = () => reject(rq.error);
     }));
   }
+  // ⚠ 任何一次 IDB 调用都必须有超时：IndexedDB 在部分环境（file:// 的某些浏览器版本、
+  //   隐私模式、被策略禁用）会**既不成功也不失败**，直接挂住。挂住的后果是
+  //   saveFile 卡在 await 上 —— 用户点「导出」什么都不会发生，比下载更糟。
+  function withTimeout(p, ms, fallback) {
+    return Promise.race([
+      p.catch(() => fallback),
+      new Promise(r => setTimeout(() => r(fallback), ms))
+    ]);
+  }
   function dirPickerSupported() {
     return typeof window.showDirectoryPicker === 'function' && typeof indexedDB !== 'undefined';
   }
+  // 句柄缓存 + 权限记忆：保证「点导出」到「真的要写盘」之间不夹多余的 await。
+  // 原因：requestPermission 依赖「用户激活」（transient activation），中间多一次
+  // IndexedDB 往返就可能把它耗掉，于是明明授权过却每次都要重新问。
+  let dirHandleCache = null;
+  let dirPermOk = false;
   async function getBackupDir() {
     if (!dirPickerSupported()) return null;
-    try { return await idbGet('backupDir'); } catch (e) { return null; }
+    if (dirHandleCache) return dirHandleCache;
+    const h = await withTimeout(idbGet('backupDir'), 700, null);
+    if (h) dirHandleCache = h;
+    return h || null;
   }
   async function pickBackupDir() {
     const h = await window.showDirectoryPicker({ id: 'reader-backup-dir', mode: 'readwrite' });
-    await idbPut(h, 'backupDir');
-    try { localStorage.setItem(BACKUP_DIR_NAME_KEY, h.name || ''); } catch (e) {}
+    // 先把句柄放进内存缓存：即使下面 IDB 写失败，本次会话内的导出也已经能直写了
+    dirHandleCache = h; dirPermOk = true;
+    // 句柄只能存 IndexedDB（localStorage 存不了对象句柄）
+    const persisted = await withTimeout(idbPut(h, 'backupDir').then(() => true), 1500, false);
+    try {
+      // 必须 JSON.stringify：读取端用 parseLS（JSON.parse），裸串会解析失败而永远显示不出来
+      localStorage.setItem(BACKUP_DIR_NAME_KEY, JSON.stringify(h.name || ''));
+      if (persisted) localStorage.removeItem(BACKUP_DIR_VOLATILE_KEY);
+      else localStorage.setItem(BACKUP_DIR_VOLATILE_KEY, JSON.stringify('1'));
+    } catch (e) {}
     return h;
+  }
+  function backupDirVolatile() { return parseLS(BACKUP_DIR_VOLATILE_KEY, '') === '1'; }
+  function forgetBackupDir() {
+    dirHandleCache = null; dirPermOk = false;
+    try { localStorage.removeItem(BACKUP_DIR_NAME_KEY); } catch (e) {}
+    try { localStorage.removeItem(BACKUP_DIR_VOLATILE_KEY); } catch (e) {}
+    try { withTimeout(idbPut(null, 'backupDir'), 1500, false); } catch (e) {}
   }
   async function ensureDirPermission(h) {
     if (!h || !h.queryPermission) return true;
+    if (dirPermOk && h === dirHandleCache) return true;
     const d = { mode: 'readwrite' };
     try {
-      if (await h.queryPermission(d) === 'granted') return true;
-      return (await h.requestPermission(d)) === 'granted';
+      if (await h.queryPermission(d) === 'granted') { dirPermOk = true; return true; }
+      const ok = (await h.requestPermission(d)) === 'granted';
+      if (ok) dirPermOk = true;
+      return ok;
     } catch (e) { return false; }
+  }
+  // ---- 文件名净化：走文件夹直写时，非法字符不再由浏览器兜底，会直接抛异常 ----
+  function sanitizeFilename(name) {
+    let n = String(name == null ? '' : name)
+      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-')      // Windows 非法字符（导出标题里最常见的冒号）
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^\.+/, '')                              // 不能以点开头
+      .replace(/[. ]+$/, '');                           // Windows 不允许以点/空格结尾
+    if (!n) n = 'untitled';
+    const m = /^(.*?)(\.[A-Za-z0-9]{1,8})$/.exec(n);
+    const base = m ? m[1] : n, ext = m ? m[2] : '';
+    n = (base.length > 80 ? base.slice(0, 80) : base) + ext;
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(base)) n = '_' + n;
+    return n;
+  }
+  // 已存在就换名（导出同一篇两次不该互相覆盖，也不该静默丢内容）
+  async function uniqueFileName(dir, name) {
+    const m = /^(.*?)(\.\w{1,8})?$/.exec(name);
+    const base = m[1], ext = m[2] || '';
+    for (let i = 1; i <= 20; i++) {
+      const cand = i === 1 ? name : base + ' (' + i + ')' + ext;
+      try { await dir.getFileHandle(cand); }
+      catch (e) { return cand; }   // 取不到 = 不存在 = 这个能用
+    }
+    return base + ' (' + Date.now() + ')' + ext;
+  }
+  // ---- 统一落盘入口：所有导出 / 备份都走这里 ----
+  // Web 平台刻意不允许网页自行决定保存路径（防静默写盘），只有 File System Access
+  // 拿到用户亲手授权过的目录句柄才能直写。所以：
+  //   有句柄  → 直接写进那个文件夹（不再走浏览器下载）
+  //   无句柄  → 退回下载，并明确告诉用户去哪儿找、怎么固定位置
+  async function saveFile(name, text, type, opts) {
+    const o = opts || {};
+    const safe = sanitizeFilename(name);
+    if (dirPickerSupported()) {
+      let dir = null;
+      try {
+        dir = await getBackupDir();
+        if (dir && !(await withTimeout(ensureDirPermission(dir), 1200, false))) dir = null;
+      } catch (e) { dir = null; }
+      if (dir) {
+        try {
+          const target = o.overwrite ? safe : await uniqueFileName(dir, safe);
+          await writeToDir(dir, target, text);
+          return { where: 'folder', dir: dir.name || '所选文件夹', name: target, renamed: target !== safe };
+        } catch (e) {
+          // 写失败（权限被撤、文件被占用、句柄过期）→ 降级下载，但把原因说清楚
+          o.fallbackReason = (e && e.message) ? e.message : String(e);
+        }
+      }
+    }
+    downloadFile(safe, text, type || 'text/plain;charset=utf-8');
+    return { where: 'download', dir: '浏览器下载文件夹', name: safe, renamed: safe !== name, reason: o.fallbackReason || '' };
+  }
+  // 保存结果 → 一句用户看得懂的话
+  function saveResultToast(r, verb) {
+    const v = verb || '已保存';
+    if (r.where === 'folder') {
+      return '✅ ' + v + '到文件夹「' + r.dir + '」／' + r.name + (r.renamed ? '（重名已自动编号）' : '');
+    }
+    return '⬇ ' + v + '，但走的是浏览器下载 → 请到「下载」文件夹找 ' + r.name +
+      (r.reason ? '（写入文件夹失败：' + r.reason + '）' : '') +
+      '\n要固定存放位置：数据 ▾ → 📂 设置保存文件夹（选一次，以后都写进去）';
   }
   function backupStamp() {
     const d = new Date(), pad = n => String(n).padStart(2, '0');
@@ -2574,38 +2820,29 @@
       showTopToast('备份失败：' + (e && e.message ? e.message : '未知错误'));
       return;
     }
+    // 备份与导出共用一条落盘路径；唯一区别是「没设过文件夹时先弹一次选择器」
+    // （备份是低频、明确的数据安全动作，值得打断一次；导出天天用，不适合每次弹）
     if (dirPickerSupported()) {
       let dir = null;
-      try {
-        dir = await getBackupDir();
-        if (!dir || !(await ensureDirPermission(dir))) dir = await pickBackupDir();
-      } catch (e) {
-        if (e && e.name === 'AbortError') { showTopToast('已取消备份'); return; }
-        dir = null;
-      }
-      if (dir) {
-        try {
-          await writeToDir(dir, name, text);
-          const dirName = dir.name || '所选文件夹';
-          try { localStorage.setItem('wsj_reader:lastBackupAt', JSON.stringify(new Date().toISOString())); } catch (e) {}
-          logBackup({ at: new Date().toISOString(), file: name, where: 'folder', dir: dirName,
-            size: backupSizeText(payload), keys: Object.keys(payload.data).length });
-          showTopToast('✅ 已备份到文件夹「' + dirName + '」／' + name + '（下次一键备份到同一处）', 5200);
-          return;
-        } catch (e) {
-          showTopToast('写入文件夹失败，改为下载：' + (e && e.message ? e.message : e), 4000);
+      try { dir = await getBackupDir(); } catch (e) { dir = null; }
+      if (dir && !(await ensureDirPermission(dir))) dir = null;
+      if (!dir) {
+        try { dir = await pickBackupDir(); }
+        catch (e) {
+          if (e && e.name === 'AbortError') { showTopToast('已取消备份'); return; }
+          dir = null;
         }
       }
     }
-    try {
-      downloadFile(name, text, 'application/json;charset=utf-8');
-      try { localStorage.setItem('wsj_reader:lastBackupAt', JSON.stringify(new Date().toISOString())); } catch (e) {}
-      logBackup({ at: new Date().toISOString(), file: name, where: 'download', dir: '浏览器下载文件夹',
-        size: backupSizeText(payload), keys: Object.keys(payload.data).length });
-      showTopToast('⬇ 已下载 ' + name + '\n→ 请在浏览器下载记录里找这个文件（通常在「下载」文件夹）。\n要固定存放位置：💾 数据 ▾ → 选择备份文件夹', 7000);
-    } catch (e) {
-      showTopToast('备份失败：' + (e && e.message ? e.message : '未知错误'));
-    }
+    const r = await saveFile(name, text, 'application/json;charset=utf-8');
+    // 备份固定覆盖同一分钟的重名文件（saveFile 默认改名为 xxx (2).json —— 备份宁可多留一份也不覆盖）
+    try { localStorage.setItem('wsj_reader:lastBackupAt', JSON.stringify(new Date().toISOString())); } catch (e) {}
+    logBackup({ at: new Date().toISOString(), file: r.name,
+      where: r.where === 'folder' ? 'folder' : 'download',
+      dir: r.where === 'folder' ? r.dir : '浏览器下载文件夹',
+      size: backupSizeText(payload), keys: Object.keys(payload.data).length });
+    if (r.where === 'folder') showTopToast('✅ 已备份到文件夹「' + r.dir + '」／' + r.name + '（下次一键备份到同一处）', 5200);
+    else showTopToast(saveResultToast(r, '已备份') + (r.reason ? '' : '\n（备份是低频操作，建议先选一次文件夹）'), 7000);
   }
   // 备份提醒：有积累数据且超过设定天数没备份时，打开文章页温和提示一次
   function maybeRemindBackup() {
@@ -2768,6 +3005,65 @@
     const o = document.getElementById('backup-overlay');
     if (o) o.remove();
   }
+  // 「设置保存文件夹」：把所有导出动作的落点从「浏览器下载文件夹」改到用户指定的文件夹
+  function openSaveDirDialog() {
+    closeAllMenus();
+    const old = document.getElementById('save-dir-overlay');
+    if (old) old.remove();
+    const saved = parseLS(BACKUP_DIR_NAME_KEY, '');
+    const sup = dirPickerSupported();
+    const overlay = document.createElement('div');
+    overlay.className = 'backup-overlay';
+    overlay.id = 'save-dir-overlay';
+    overlay.innerHTML =
+      '<div class="backup-box">' +
+      '<div class="bk-head"><h3>📂 文件保存位置</h3><button type="button" class="bk-close" title="关闭">✕</button></div>' +
+      '<div class="bk-facts">' +
+      '<div><span class="bk-k">当前</span><span class="bk-v">' +
+      esc(saved || (sup ? '未设置 —— 导出会进浏览器默认的「下载」文件夹' : '浏览器不支持，只能用「下载」文件夹')) +
+      (saved && backupDirVolatile() ? '（本机存不住句柄，重开页面后要重选一次）' : '') + '</span></div>' +
+      '<div><span class="bk-k">会跟着变的</span><span class="bk-v">Markdown 笔记 / JSON / 生词 CSV / 作文 / 模板 / 同义表 / 全部数据备份</span></div>' +
+      '</div>' +
+      '<div class="bk-actions">' +
+      (sup ? '<button type="button" class="bk-btn primary" data-act="pick">' + (saved ? '更换文件夹' : '选择文件夹') + '</button>' : '') +
+      (saved ? '<button type="button" class="bk-btn" data-act="forget">清除保存位置</button>' : '') +
+      '<button type="button" class="bk-btn" data-act="close">关闭</button>' +
+      '</div>' +
+      '<div class="bk-note">浏览器出于安全不允许网页自己决定保存路径（否则任何网页都能往你的磁盘里塞文件），' +
+      '所以只能由你亲手选一次。选过之后本机记住这个文件夹，之后所有导出与备份都直接写进去，不再走下载。' +
+      (sup ? '' : '<br>当前浏览器不支持选文件夹：可到浏览器「设置 → 下载」里改默认下载目录作为替代。') +
+      '</div></div>';
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    const refreshLabel = () => {
+      const btn = document.getElementById('save-dir-btn');
+      if (!btn) return;
+      const spans = btn.querySelectorAll('span');
+      if (spans[1]) spans[1].textContent = saveDirMenuLabel();
+    };
+    overlay.querySelector('.bk-close').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    const pick = overlay.querySelector('[data-act="pick"]');
+    if (pick) pick.addEventListener('click', async () => {
+      try {
+        const h = await pickBackupDir();   // 必须在点击的手势里调用
+        showTopToast('✅ 保存位置已设为「' + (h.name || '所选文件夹') + '」——之后导出与备份都直接写进去', 5200);
+        refreshLabel();
+        close();
+      } catch (e) {
+        if (e && e.name !== 'AbortError') showTopToast('选择文件夹失败：' + (e && e.message ? e.message : e));
+      }
+    });
+    const forget = overlay.querySelector('[data-act="forget"]');
+    if (forget) forget.addEventListener('click', () => {
+      if (!confirm('清除保存位置？之后导出会重新回到浏览器默认下载文件夹（已保存的文件不受影响）。')) return;
+      forgetBackupDir();
+      showTopToast('已清除保存位置，导出将回到浏览器下载文件夹');
+      refreshLabel();
+      close();
+    });
+    overlay.querySelector('[data-act="close"]').addEventListener('click', close);
+  }
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && document.getElementById('backup-overlay')) closeBackupPanel();
   });
@@ -2912,18 +3208,2365 @@
     saveSettings();
   }
 
-﻿  // ===== Injected menu extras (UX-2 / UX-4 / UX-7) — article HTML stays untouched =====
-  const EXAM_SLUGS = {
-    'SundayTimes_2026-06-14_Hidden_Cost_AI_Fortson_EN-CN_final.html': 'ai_cost',
-    'WSJ_2026-03-21_AI_Regulation_Fryer_EN-CN_final.html': 'ai_regulation',
-    'WSJ_2026-03-21_Ammo_Shortage_Jones_EN-CN_final.html': 'ammo_shortage',
-    'WSJ_2026-03-21_FCC_Sports_Jenkins_EN-CN_final.html': 'fcc_sports',
-    'SundayTimes_2026-06-14_Haldane_Chainsaw_Regulation_Treanor_EN-CN_final.html': 'haldane',
-    'Science_2026-06-04_Narrowing_Window_AI_Horvitz-West_EN-CN_final.html': 'horvitz',
-    'Science_2026-03-26_Moral_Economics_Perry_EN-CN_final.html': 'moral_econ',
-    'SundayTimes_2026-06-14_Junior_Pensions_Filby_EN-CN_final.html': 'pensions',
-    'SundayTimes_2026-06-14_Pothole_Compensation_Harwood-Baynes_EN-CN_final.html': 'pothole'
+  // ===== 报纸阅读页（两份相互独立的报纸：英文版 / 中文版）=====
+  // 设计目标：阅读模式 = 电子报。**英文版与中文版是两份各自完整的报纸**（各有自己的报头、
+  // 主标题、速览、页码），互不混排；报眉上的语言切换（EN / 中文）在两份报纸之间跳转。
+  //
+  // 关键架构决策（改动务必先读）：
+  // 1) **搬真实元素，不复制内容**。段落 <p>、blockquote、插画 SVG 都是从原列里「搬」进版面的，
+  //    所以标注 <mark>、词频着色 <span>、可编辑译文的 contenteditable、浮动批注菜单**全部照常工作**。
+  // 2) **每版正文容器都带 `col-body en` / `col-body cn` 类**，于是
+  //    `querySelectorAll('.col-body.en p[data-para-idx]')` 这类既有选择器跨版依然能找齐所有段落，
+  //    只有 4 处「用 querySelector 取首个 .col-body」的滚动相关代码需要适配（进度条 / 阅读位置 /
+  //    列高同步 / 两列滚动同步），它们已改为「报纸模式下走页码」。
+  // 3) **原列在报纸模式下清空并摘掉 col-body 类**，退出时按原顺序还原 —— 保证任一时刻
+  //    `.col-body.en` 只对应一套真实段落，不会出现「同一个段落有两个容器」的歧义。
+  // 4) 两条流各自分版：英文流 → 英文版第 1..N 版；中文流 → 中文版第 1..M 版，
+  //    版序连续放在同一条轨道上。**翻版被限制在当前语言那一本里**（见 paperGoto 的钳制），
+  //    所以「下一版」永远不会翻进另一份报纸 —— 语言只由报眉的 EN / 中文 切换。
+  const PAPER_VIEW = 'paper';
+  // 「我习惯怎么读」是全局偏好，不该按篇记
+  const PAPER_VIEW_KEY = 'wsj_reader:view';
+  // 当前在看哪一份报纸（'en' | 'cn'）。同样是全局偏好，换文章照样生效。
+  const PAPER_LANG_KEY = 'wsj_reader:paperLang';
+  const PAPER_LANGS = ['en', 'cn'];
+  let paperPages = [];
+  let paperIndex = 0;
+  let paperRestore = null;      // 退出时还原用的原容器 / 原始子节点顺序
+  let paperResizeTimer = null;
+
+  function paperViewPref() {
+    try {
+      const v = localStorage.getItem(PAPER_VIEW_KEY);
+      if (v === PAPER_VIEW || v === 'reader') return v;
+    } catch (e) {}
+    return settings.view === PAPER_VIEW ? PAPER_VIEW : 'reader';
+  }
+  function paperSetView(v) {
+    try { localStorage.setItem(PAPER_VIEW_KEY, v); } catch (e) {}
+    settings.view = v; saveSettings();
+  }
+  function paperModeOn() { return paperViewPref() === PAPER_VIEW; }
+  function paperPageIndex() { return paperIndex; }
+  function paperPageCount() { return paperPages.length; }
+
+  // ---------- 语言（两份相互独立的报纸）----------
+  function paperLangGet() {
+    try {
+      const v = localStorage.getItem(PAPER_LANG_KEY);
+      if (PAPER_LANGS.indexOf(v) >= 0) return v;
+    } catch (e) {}
+    return 'en';
+  }
+  function paperSetLangPref(v) { try { localStorage.setItem(PAPER_LANG_KEY, v); } catch (e) {} }
+  // 某个语言对应的版序区间（0 基，含两端）。「中文版」从英文版的末版之后开始。
+  // 版面尚未构建 / 该语言没有内容时返回 null。
+  function paperLangRange(lang) {
+    const cap = paperRestore;
+    const enN = (cap && cap.enPages) || 0;
+    const cnN = (cap && cap.cnPages) || 0;
+    if (lang === 'cn') return cnN ? { from: enN, to: enN + cnN - 1 } : null;
+    return enN ? { from: 0, to: enN - 1 } : null;
+  }
+  function paperLangOf(index) {
+    const r = paperLangRange('en');
+    return r && index <= r.to ? 'en' : 'cn';
+  }
+
+  // ---------- 报头文案 ----------
+  // ⚠ 各篇文章的 `.title-block .meta` 写法**并不统一**（有的把日期塞在同一条里、
+  //   有的根本没写日期、中文来源有的有有的没有），所以这里做两层取值：
+  //     ① 从 meta 的分段里找「带四位年份」的那一段当日期
+  //     ② 找不到就回落到**文件名里的 ISO 日期** —— <来源>_YYYY-MM-DD_<slug>_..._EN-CN_final.html
+  //   实测 9 篇里有 1 篇 meta 完全没有日期（Science 那篇），只靠 meta 会静默退化成「今天」。
+  function paperIsoDate() {
+    const m = /((?:19|20)\d{2})-(\d{1,2})-(\d{1,2})/.exec(String(articleId || ''));
+    return m ? { y: +m[1], mo: +m[2], d: +m[3] } : null;
+  }
+  function paperSource() {
+    const el = document.querySelector('.title-block .meta');
+    const parts = (el ? el.textContent : '').split('·').map(s => s.trim()).filter(Boolean).map(s => s.replace(/\s+/g, ' '));
+    let date = '', cnSource = '';
+    parts.forEach(p => {
+      if (!date && /(?:19|20)\d{2}/.test(p)) date = p;
+      // 中文来源：短、且不是日期/句子（"星期日泰晤士报" 是来源；"谄媚式 AI 扭曲社会……" 是标题）
+      if (!cnSource && /[\u4e00-\u9fa5]/.test(p) && !/[年月日]/.test(p) &&
+          p.length <= 12 && !/[，。；]/.test(p)) cnSource = p;
+    });
+    const source = parts[0] || '';
+    return { source: source, date: date, iso: paperIsoDate(), cnSource: cnSource || source };
+  }
+  // 中文刊名（中文版报纸的报头）
+  function paperName() {
+    const names = {
+      ai_cost: 'AI 资本观察', ai_regulation: '监管经济评论', ammo_shortage: '国防供应链',
+      fcc_sports: '传媒与体育', haldane: '监管与增长', horvitz: '科学前沿',
+      moral_econ: '社会心理研究', pensions: '家庭财经', pothole: '消费者权益'
+    };
+    return names[articleMeta.slug] || '外刊精读日报';
+  }
+  // 英文刊名（英文版报纸的报头）—— 英文版与中文版是两份相互独立的报纸，刊名各自成体系
+  function paperNameEn() {
+    const names = {
+      ai_cost: 'AI Capital Watch', ai_regulation: 'Regulation & Markets', ammo_shortage: 'Defense Supply',
+      fcc_sports: 'Media & Sports', haldane: 'Growth & Regulation', horvitz: 'Science Frontier',
+      moral_econ: 'Mind & Society', pensions: 'Family Finance', pothole: 'Consumer Watch'
+    };
+    return names[articleMeta.slug] || 'Foreign Press Weekly';
+  }
+  function paperTitle() {
+    const el = document.querySelector('.title-block h1:not(.cn)');
+    return el ? el.textContent.trim() : (document.title || '');
+  }
+  function paperCnTitle() {
+    const el = document.querySelector('.title-block h1.cn');
+    return el ? el.textContent.trim() : '';
+  }
+  function paperAuthor() {
+    const el = document.querySelector('.title-block .author:not(.cn)');
+    return el ? el.textContent.trim() : '';
+  }
+  function paperCnAuthor() {
+    const el = document.querySelector('.title-block .author.cn');
+    return el ? el.textContent.trim() : '';
+  }
+  // 英文日期 / 中文日期各一份，都从同一个 Date 对象派生（保证两份报纸说的是同一天）
+  const PAPER_EN_MON = ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'];
+  function paperDateObj() {
+    const { date, iso } = paperSource();
+    let d = null;
+    const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(String(date || ''));
+    if (m) d = new Date(+m[1], +m[2] - 1, +m[3]);
+    else if (date) { const t = Date.parse(date); if (!isNaN(t)) d = new Date(t); }
+    if ((!d || isNaN(d.getTime())) && iso) d = new Date(iso.y, iso.mo - 1, iso.d);
+    if (!d || isNaN(d.getTime())) d = new Date();
+    return d;
+  }
+  function paperDateEn() {
+    const d = paperDateObj();
+    return PAPER_EN_MON[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+  }
+
+  // ---------- 报纸版字号 ----------
+  // ⚠ CSS 里**不能**声明 --np-font：一旦给 body 或 .paper-root 声明了，就会在子树里
+  //   盖掉 <html> 上的内联值，A+/A− 点了没反应。所以字号只由这里写到 documentElement。
+  function paperFontPx() {
+    const base = settings.paperFont || 16.5;
+    // 小屏收一点，一行能多放几个词；用户仍可用 A+/A− 覆盖
+    return window.innerWidth <= 900 ? Math.round(base * 0.92 * 10) / 10 : base;
+  }
+  function paperApplyFont() {
+    document.documentElement.style.setProperty('--np-font', paperFontPx() + 'px');
+  }
+
+  // ---------- 分栏数 ----------
+  // 每版一张纸、页内多栏。默认：≥760px 双栏（报纸的常规栏宽），窄屏单栏。
+  // 报眉的「栏」按钮可以在 1 / 2 / 3 栏之间切，选择全局记住 —— 三类宽度都合规矩，
+  // 到底几栏读着舒服是眼睛的事，所以做成可切而不是写死。
+  const PAPER_COL_GAP = 40;
+  const PAPER_COLS_KEY = 'wsj_reader:paperCols';
+  function paperColsPref() {
+    let v = 0;
+    try { v = parseInt(localStorage.getItem(PAPER_COLS_KEY) || '0', 10) || 0; } catch (e) {}
+    if (v === 1 || v === 2 || v === 3) return v;
+    return window.innerWidth >= 760 ? 2 : 1;
+  }
+  function paperLayoutMetrics() {
+    return { cols: paperColsPref() };
+  }
+
+  // ---------- 版面骨架 ----------
+  // 栏头做成和三栏视图一致的「标签 + 名称」样式，一眼看清是哪一页
+  function paperRunhead(tag, name, title, pageNo) {
+    return '<header class="np-runhead">' +
+      '<span class="np-tag np-tag-' + tag.toLowerCase() + '">' + esc(tag) + '</span>' +
+      '<span class="np-run-name">' + esc(name) + '</span>' +
+      '<span class="np-run-title">' + esc(title) + '</span>' +
+      '<span class="np-run-page">第 ' + pageNo + ' 版</span></header>';
+  }
+  // 页脚也是「一本书一份」：英文版用英文刊名与原文来源，中文版用中文刊名与中文来源
+  function paperLeafFoot(kind, pageNo, total) {
+    const { source, cnSource } = paperSource();
+    const en = kind === 'en';
+    const left = en ? (source || paperNameEn()) : (cnSource || paperName());
+    const mid = en
+      ? '— Page ' + pageNo + (total ? ' of ' + total : '') + ' —'
+      : '— 第 ' + pageNo + (total ? ' / ' + total : '') + ' 版 —';
+    const right = en ? 'ORIGINAL EDITION' : '中文版 · 译文原载于本刊英文版';
+    return '<footer class="np-foot"><span>' + esc(left) + '</span>' +
+      '<span class="np-pageno">' + esc(mid) + '</span>' +
+      '<span>' + esc(right) + '</span></footer>';
+  }
+
+  // 「本篇速览 / AT A GLANCE」——按语言各成一份（英文版数词数，中文版数字数）
+  // ⚠ 必须从捕获到的原始子节点里数，不能再去查 `.main-wrap .col-body.en`：
+  //   报纸模式已经把原列改名成 np-source 且清空了，查选择器只会得到 0。
+  function paperQuickFacts(cap) {
+    let words = 0, paras = 0, chars = 0;
+    (cap && cap.enKids || []).forEach(k => {
+      if (!k.dataset || !k.dataset.paraIdx) return;
+      const mm = k.textContent.match(/[A-Za-z][A-Za-z'\-]*/g);
+      if (mm) words += mm.length;
+    });
+    (cap && cap.cnKids || []).forEach(k => {
+      if (!k.dataset || !k.dataset.paraIdx) return;
+      paras++;
+      chars += k.textContent.replace(/\s/g, '').length;
+    });
+    const vocab = annotations.filter(a => a && a.bucket === 'vocab' && a.text).length;
+    return {
+      words: words, chars: chars, paras: paras, vocab: vocab,
+      minutesEn: Math.max(1, Math.round(words / 180)),
+      minutesCn: Math.max(1, Math.round(chars / 300))
+    };
+  }
+  function paperFactsHTML(f, lang) {
+    if (lang === 'cn') {
+      return '<aside class="np-facts">' +
+        '<div class="np-facts-h">本篇速览</div>' +
+        '<div class="np-facts-grid">' +
+        '<div><b>' + f.chars + '</b><span>字</span></div>' +
+        '<div><b>' + f.paras + '</b><span>段</span></div>' +
+        '<div><b>' + f.vocab + '</b><span>你的生词</span></div>' +
+        '<div><b>' + f.minutesCn + '</b><span>分钟</span></div>' +
+        '</div></aside>';
+    }
+    return '<aside class="np-facts">' +
+      '<div class="np-facts-h">AT A GLANCE</div>' +
+      '<div class="np-facts-grid">' +
+      '<div><b>' + f.words + '</b><span>words</span></div>' +
+      '<div><b>' + f.paras + '</b><span>paragraphs</span></div>' +
+      '<div><b>' + f.vocab + '</b><span>your vocab</span></div>' +
+      '<div><b>' + f.minutesEn + '</b><span>min read</span></div>' +
+      '</div></aside>';
+  }
+
+  // 「精读提示」框——挂在英文正文末尾，像报纸的「语言点」小栏目
+  function paperDigestHTML() {
+    const points = [];
+    document.querySelectorAll('.thesis-block ol > li').forEach(li => {
+      const t = li.textContent.trim();
+      if (t) points.push(t);
+    });
+    const vocab = annotations.filter(a => a && a.bucket === 'vocab' && a.text).slice(0, 14);
+    if (!points.length && !vocab.length) return '';
+    let h = '<div class="np-digest"><div class="np-digest-h">精读提示</div>';
+    if (points.length) {
+      h += '<div class="np-digest-sec"><span class="np-digest-t">本篇要点</span><ol>' +
+        points.map(p => '<li>' + esc(p) + '</li>').join('') + '</ol></div>';
+    }
+    if (vocab.length) {
+      h += '<div class="np-digest-sec"><span class="np-digest-t">重点表达</span><ul>' +
+        vocab.map(v => '<li><b>' + esc(v.text) + '</b><i>' + esc((v.definition || v.note || '').trim() || '—') + '</i></li>').join('') +
+        '</ul></div>';
+    }
+    return h + '</div>';
+  }
+
+  // 每种语言的「第 1 版」都是一张完整报纸的头版（独立报头 + 主标题 + 题图 + 速览），
+  // 后续版只出内页眉 —— 这正是「英文版 / 中文版两份相互独立的报纸」的落点。
+  function paperHeadFor(kind, pageNo, total, artHtml, facts, isFirst) {
+    if (isFirst) {
+      const { source, cnSource } = paperSource();
+      const en = kind === 'en';
+      const name = en ? paperNameEn() : paperName();
+      const src = en ? (source || 'FOREIGN PRESS') : (cnSource || source || '星期日泰晤士报');
+      const date = en ? paperDateEn() : paperDateText();
+      const title = en ? paperTitle() : (paperCnTitle() || paperTitle());
+      const sub = en ? (paperCnTitle() || '') : (paperCnTitle() ? paperTitle() : '');
+      const by = en ? paperAuthor() : (paperCnAuthor() || paperAuthor());
+      const tag = en ? 'FOREIGN PRESS · BILINGUAL READER' : '外刊精读 · 双语对照';
+      return '<header class="np-masthead">' +
+        '<div class="np-m-top"><span>' + esc(src) + '</span>' +
+        '<span>' + esc(date) + '</span>' +
+        '<span>' + (total ? (en ? total + ' pages' : '共 ' + total + ' 版') : '') + '</span></div>' +
+        '<h1 class="np-m-name">' + esc(name) + '</h1>' +
+        '<div class="np-m-rule"><span>' + esc(tag) + '</span><span>' + esc(by || (en ? 'READING EDITION' : '精读版')) + '</span></div>' +
+        '</header>' +
+        '<div class="np-lead' + (artHtml ? ' has-art' : '') + '">' +
+        '<div class="np-lead-text">' +
+        '<h2 class="np-headline">' + esc(title) + '</h2>' +
+        (sub ? '<div class="np-subhead">' + esc(sub) + '</div>' : '') +
+        (by ? '<div class="np-byline">' + esc(by) + '</div>' : '') +
+        '</div>' +
+        (artHtml ? '<figure class="np-fig">' + artHtml + '</figure>' : '') +
+        '</div>' +
+        (facts ? paperFactsHTML(facts, kind) : '');
+    }
+    // 内页眉也按「哪一份报纸」着色：EN 徽标配英文刊名，CN 徽标配中文版刊名
+    return kind === 'cn'
+      ? paperRunhead('CN', '中文版 · ' + paperName(), (paperCnTitle() || paperTitle()).slice(0, 40), pageNo)
+      : paperRunhead('EN', paperNameEn(), paperTitle().slice(0, 40), pageNo);
+  }
+  // 每版就是一张纸。英文版的第 1 版与中文版的第 1 版都出完整头版
+  // （各自的报头 / 主标题 / 题图 / 速览），因为它们是**两份独立的报纸**。
+  function paperMakePage(pageNo, total, m, kind, artHtml, facts, isFirst) {
+    const page = document.createElement('section');
+    page.className = 'np-page np-page-' + kind + (isFirst ? ' is-first' : '');
+    page.dataset.page = String(pageNo);
+    page.dataset.lang = kind;
+    const leaf = document.createElement('article');
+    leaf.className = 'np-leaf np-leaf-' + kind;
+    leaf.innerHTML = paperHeadFor(kind, pageNo, total, artHtml, facts, isFirst) +
+      '<div class="np-body col-body ' + (kind === 'cn' ? 'cn' : 'en') + '"></div>' +
+      paperLeafFoot(kind, pageNo, total);
+    page.appendChild(leaf);
+    return page;
+  }
+
+  // ---------- 构建 / 分版 ----------
+  function paperEn() {
+    return document.querySelector('.main-wrap .col-body.en') ||
+      document.querySelector('.main-wrap .col-body');
+  }
+  function paperCn() {
+    return document.querySelector('.main-wrap .col-body.cn');
+  }
+
+  function paperCapture() {
+    const en = paperEn();
+    const cn = paperCn();
+    if (!en || !cn) return null;
+    const artHost = document.querySelector('.art-block');
+    return {
+      en: en, cn: cn,
+      enKids: Array.prototype.slice.call(en.children),
+      cnKids: Array.prototype.slice.call(cn.children),
+      artHost: artHost,
+      artSvg: artHost ? artHost.querySelector('svg') : null,
+      // 原列的类名要在退出时精确还原
+      enClass: en.className, cnClass: cn.className
+    };
+  }
+
+  // 把一条正文流分版到多张纸上；返回用掉的最后一个版号。
+  //
+  // 分版方式：**先塞满、再按真实溢出回退**（实测，不估算）。
+  //   ① 把剩余块全部 append 进本版正文容器；
+  //   ② 多栏容器一旦装不下，浏览器会排到第 3 栏（版面外的隐式栏），此时 scrollWidth > clientWidth；
+  //   ③ 从末尾逐个移除，直到不再溢出 —— 此刻的容量就是「刚好装满」。
+  //
+  // 为什么不能用「逐块累加高度、超了就 break」的估算法：
+  //   那个算法假设「块不可断开」，可 CSS 是允许 <p> 跨栏断开的（报纸正是这么排的）。
+  //   两者一矛盾就会严重低估容量 —— 实测每版只装到 86%，还会把「精读提示」单独挤成一版，
+  //   上一版底部留下大片空白。
+  // ⚠ 必须显式强制一次重排再读 scrollWidth。
+  //   removeChild 之后直接读 scrollWidth 会拿到**上一次布局的缓存值**（仍是「溢出」），
+  //   结果回退循环会一路删到只剩一个块 —— 表现出来就是每版只装 1~3 段、底部大片空白。
+  function paperOverflowed(body) {
+    void body.offsetWidth;
+    if (body.scrollWidth <= body.clientWidth + 1) return false;
+    void body.offsetWidth;                                   // 复核一次，避免缓存
+    return body.scrollWidth > body.clientWidth + 1;
+  }
+  function paperPackFlow(track, flow, kind, m, startPage, artHtml, facts) {
+    const MAX_PAGES = 80;
+    const firstPage = startPage + 1;
+    let i = 0, pageNo = startPage;
+    do {
+      pageNo++;
+      const isFirst = pageNo === firstPage;   // 每种语言的第 1 版都出完整头版
+      const localNo = pageNo - startPage;     // 版号是「这一份报纸内部」的编号，从 1 起
+      const page = paperMakePage(localNo, 0, m, kind,
+        isFirst ? artHtml : '', isFirst ? facts : null, isFirst);
+      track.appendChild(page);
+      const body = page.querySelector('.np-body');
+      // 每版的正文容器显式设为多栏：JS 与 CSS 必须一致，否则溢出判定不成立
+      body.style.columnCount = String(m.cols);
+      body.style.columnGap = PAPER_COL_GAP + 'px';
+
+      // ① 剩余块全部放进本版（搬真实元素，保留 <mark> 标注 / 词频 <span> / contenteditable）
+      const from = i;
+      while (i < flow.length) {
+        const b = flow[i];
+        if (b.el) {
+          if (b.quote) b.el.classList.add('np-quote');
+          body.appendChild(b.el);
+        } else {
+          body.insertAdjacentHTML('beforeend', b.html);
+        }
+        i++;
+      }
+      // ③ 逐个回退到刚好不溢出；至少留一个块，避免「单块超高」把整版清空导致死循环
+      let guard = 0;
+      while (body.children.length > 1 && paperOverflowed(body) && guard++ < 400) {
+        body.removeChild(body.lastElementChild);
+        i--;
+      }
+      if (i === from) i = from + 1;   // 兜底：本版什么都装不下也至少推进一格
+    } while (i < flow.length && pageNo < MAX_PAGES);
+    return pageNo;
+  }
+
+  function paperBuild() {
+    const root = document.getElementById('paper-root');
+    if (!root) return;
+    if (!paperRestore) paperRestore = paperCapture();
+    const cap = paperRestore;
+    if (!cap) { showTopToast('未找到正文列，无法生成报纸版'); return; }
+    paperBuilding = true;
+
+    // ⚠⚠ 必须先把「跨列等高」留下的 inline min-height 清掉再分版。
+    //   三栏视图的 doHeightSync 会让 EN/CN 同一段等高，做法是给每个段落写 inline min-height
+    //   （实测最长到 633px）。它在页面载入时先于报纸版跑过一次，那些 min-height 就留在段落上；
+    //   报纸分版是按真实高度算的，段落被撑大后 →
+    //     ① 每段占一大块、段号之间隔着一大片空白（用户看到的「中间空着大部分」）
+    //     ② 每版装不下几段，版数近乎翻倍（实测 6 版 → 9 版）
+    //   这里直接按捕获到的原始子节点清，不依赖类名（此刻原列已改名为 .np-source，
+    //   按 `.col-body p` 查是查不到的）。
+    cap.enKids.concat(cap.cnKids).forEach(k => {
+      if (k.style) k.style.minHeight = '';
+    });
+
+    const track = root.querySelector('#np-track');
+    const m = paperLayoutMetrics();
+    const artHtml = cap.artSvg ? cap.artSvg.outerHTML : '';
+
+    // 清场：把上一版的段落原地收回，再重排（避免元素被搬来搬去丢失事件绑定）
+    Array.prototype.slice.call(track.querySelectorAll('.np-page')).forEach(p => p.remove());
+    cap.enKids.forEach(k => cap.en.appendChild(k));
+    cap.cnKids.forEach(k => cap.cn.appendChild(k));
+
+    // 两条流**各自独立成流**：英文版只取英文列的子节点，中文版只取中文列的子节点。
+    // ⚠ 这里刻意**不做「逐段配对」**：中文段落不必与英文一一对应（译文可以合并或拆分段落），
+    //   一旦按 data-para-idx 配对，中文列里那些「找不到对应英文段」的段落会被静默丢掉 ——
+    //   而中文版是一份独立的报纸，它的段落完整性只取决于它自己的内容。
+    //   两条流用的都是**真实元素**（不复制），所以标注 / 词频 / 译文编辑照常工作。
+    const buildFlow = (kids) => {
+      const flow = [];
+      kids.forEach(k => {
+        if (k.tagName === 'BLOCKQUOTE') flow.push({ el: k, quote: true });
+        else if (k.dataset && k.dataset.paraIdx) flow.push({ el: k });
+      });
+      return flow;
+    };
+    const flowEn = buildFlow(cap.enKids);
+    const flowCn = buildFlow(cap.cnKids);
+    // 「精读提示」框是报纸背面的「语言点」小栏目。
+    // ⚠ 挂在**译文流末尾**而不是英文流末尾：中文段落比英文短，最后一版通常有余量，
+    //   挂这里既填满末版留白，又不会像挂在英文流时那样被挤成「单独占一整版、四周空白」。
+    //   本篇不看译文时才退回英文流末尾。
+    // ⚠ 中文版**始终构建**（只要本文有译文）：英文版与中文版是两份相互独立的报纸，
+    //   语言切换不应该依赖「显示中文」那个三栏视图的开关。
+    const hasCnFlow = flowCn.length > 0;
+    const digest = paperDigestHTML();
+    if (digest) (hasCnFlow ? flowCn : flowEn).push({ html: digest });
+
+    const facts = paperQuickFacts(cap);
+    cap.enPages = paperPackFlow(track, flowEn, 'en', m, 0, artHtml, facts);
+    cap.cnPages = hasCnFlow
+      ? paperPackFlow(track, flowCn, 'cn', m, cap.enPages, artHtml, facts) - cap.enPages
+      : 0;
+
+    paperPages = Array.prototype.slice.call(track.querySelectorAll('.np-page'));
+    cap.pagesTotal = paperPages.length;
+    // 版号是**每份报纸内部**的编号：英文版 Page 1..N、中文版第 1..M 版，
+    // 两份各自从「第 1 版」重新起算 —— 它们本来就是两份独立的报纸。
+    paperPages.forEach((p, k) => {
+      const isCn = k >= cap.enPages;
+      const local = isCn ? k - cap.enPages + 1 : k + 1;
+      const totalInEd = isCn ? cap.cnPages : cap.enPages;
+      // **每一本的最后一版改成平衡分栏**：末版内容常常只占 1 栏多一点，
+      // 用 column-fill:auto 会「第一栏满、第二栏几乎空」，看着像漏排。
+      // 平衡后两栏等高，读者看到的是「这一版就这么多」，而不是「缺了一块」。
+      // 安全性：末版的内容总量必然 ≤ 栏数（否则分版时就溢出了），
+      // 所以平衡后每栏都不会超过 100%，不会引入溢出。
+      if (local === totalInEd) {
+        const body = p.querySelector('.np-body');
+        if (body) body.style.columnFill = 'balance';
+      }
+      const s = p.querySelectorAll('.np-m-top span');
+      if (s[2]) s[2].textContent = isCn ? ('共 ' + totalInEd + ' 版') : (totalInEd + ' pages');
+      p.querySelectorAll('.np-run-page').forEach(el => { el.textContent = '第 ' + local + ' 版'; });
+      p.querySelectorAll('.np-pageno').forEach(el => {
+        el.textContent = isCn
+          ? ('— 第 ' + local + ' / ' + totalInEd + ' 版 —')
+          : ('— Page ' + local + ' of ' + totalInEd + ' —');
+      });
+    });
+    paperBuilding = false;
+    // 当前语言那一本可能不存在（本文没有译文 → 中文版没建）→ 回落到英文版
+    if (!paperLangRange(paperLangGet())) paperSetLangPref('en');
+    paperApplyLayout(false);
+    paperApplyLang();
+    // 建版 / 重排后的落位不算「翻版」，不要放动画
+    paperGoto(Math.min(paperIndex, paperPages.length - 1), { silent: true });
+  }
+
+  // ---------- 建立 / 关闭 ----------
+  // 报纸的「出版信息」：日期做成报头 dateline 的读法（2026 年 6 月 14 日  星期日）
+  function paperDateText() {
+    const d = paperDateObj();
+    return d.getFullYear() + ' 年 ' + (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日  星期' +
+      '日一二三四五六'[d.getDay()];
+  }
+
+  /* 报眉分两行，都是报纸上真实存在的东西：
+     ① 报名栏 .np-mastbar —— 刊名 + 出版信息（日期 / 时刻 / 阅读计时）
+     ② 栏目索引栏 .np-indexbar —— 四个下拉（视图·考试·数据·工具）+ 翻版 + 工具按钮
+     底栏 (.toolbar) 在报纸模式下整条不再显示；其中真正有用的部分由
+     paperAdoptControls() 在运行时搬进这里（DOM 与事件监听原样保留）。 */
+  function paperTopbarHTML() {
+    return '<div class="np-topbar">' +
+      '<div class="np-mastbar">' +
+      // 刊名 / 来源 / 出版日期 / 版次 都按「当前这一份报纸」填，见 paperApplyLang
+      '<div class="np-brand"><span class="np-brand-name" id="np-brand-name"></span>' +
+      '<span class="np-brand-sub" id="np-brand-sub"></span></div>' +
+      '<div class="np-dateline">' +
+      '<span class="np-dl-ed" id="np-dl-ed"></span>' +
+      '<span class="np-dl-date" id="np-dl-date"></span>' +
+      '<span class="np-timehost" id="np-timehost"></span>' +
+      '</div>' +
+      '</div>' +
+      '<div class="np-indexbar">' +
+      '<div class="np-menus" id="np-menus"></div>' +
+      // 语言切换：英文版 / 中文版 是两份相互独立的报纸，这里是唯一的入口
+      '<div class="np-langseg" role="group" aria-label="语言切换 / Language">' +
+      '<button type="button" class="np-lang-btn" id="np-lang-en" aria-pressed="true" title="English edition">EN</button>' +
+      '<button type="button" class="np-lang-btn" id="np-lang-cn" aria-pressed="false" title="中文版">中文</button>' +
+      '</div>' +
+      '<div class="np-flip">' +
+      '<button type="button" class="np-btn" id="np-prev" title="上一版（←）">‹ 上一版</button>' +
+      '<span class="np-pos" id="np-pos">1 / 1</span>' +
+      '<button type="button" class="np-btn" id="np-next" title="下一版（→）">下一版 ›</button>' +
+      '</div>' +
+      '<div class="np-tools">' +
+      (articleMeta.hasExam
+        ? '<button type="button" class="np-btn np-exam" id="np-exam" title="考试模式：阅读理解 / 完形填空 / 新题型 / 翻译练习 / 写作">🎓 考试</button>'
+        : '') +
+      '<button type="button" class="np-btn" id="np-sum" title="展开/收起导读摘要">导读</button>' +
+      '<button type="button" class="np-btn" id="np-notes" title="展开/收起剪报本（笔记与生词）">笔记</button>' +
+      '<button type="button" class="np-btn" id="np-cols" title="切换栏数：1 / 2 / 3 栏">栏 2</button>' +
+      '<button type="button" class="np-btn" id="np-sd" title="缩小字号">A−</button>' +
+      '<button type="button" class="np-btn" id="np-su" title="放大字号">A+</button>' +
+      '<button type="button" class="np-btn" id="np-print" title="打印成纸质报纸">打印</button>' +
+      '<button type="button" class="np-btn np-exit" id="np-exit" title="切到三栏对照视图">三栏对照</button>' +
+      '</div>' +
+      '</div></div>';
+  }
+
+  // 把底栏里真正有用的东西搬进报眉：四个下拉菜单 → 栏目索引栏；时钟/计时 → 出版信息条。
+  // 只移动节点、不动事件监听，退出时按记录的位置原样放回。
+  let paperAdopted = [];
+  function paperAdoptControls() {
+    const host = document.getElementById('np-menus');
+    const timeHost = document.getElementById('np-timehost');
+    if (!host) return;
+    paperAdopted = [];
+    const move = (el, target) => {
+      if (!el || !target || el.parentNode === target) return;
+      paperAdopted.push({ el: el, parent: el.parentNode, next: el.nextSibling });
+      target.appendChild(el);
+    };
+    document.querySelectorAll('.toolbar .menu-trigger-wrap').forEach(w => move(w, host));
+    // 时钟 / 计时 → 出版信息条。
+    // ⚠ 模板有两种形态：新版把三个时钟元素包在 .toolbar-clock-area 里，旧版是散着的。
+    //   优先搬包装（保住它自带的布局），没有包装就逐个搬，两种都能落到出版信息条。
+    const clockArea = document.querySelector('.toolbar .toolbar-clock-area');
+    if (timeHost) {
+      if (clockArea) move(clockArea, timeHost);
+      else ['toolbar-clock', 'session-timer', 'total-timer'].forEach(id =>
+        move(document.querySelector('.toolbar #' + id), timeHost));
+    }
+    if (!host.children.length) host.remove();
+    // 底栏整条收起的开关交给 JS 置位 —— 万一搬移失败，底栏仍然可见可用（不会丢入口）
+    document.body.classList.add('paper-controls-adopted');
+  }
+  function paperReleaseControls() {
+    // 逆序放回，保证先恢复被当作 nextSibling 参照的那个节点
+    for (let i = paperAdopted.length - 1; i >= 0; i--) {
+      const it = paperAdopted[i];
+      if (!it.parent) continue;
+      if (it.next && it.next.parentNode === it.parent) it.parent.insertBefore(it.el, it.next);
+      else it.parent.appendChild(it.el);
+    }
+    paperAdopted = [];
+    document.body.classList.remove('paper-controls-adopted');
+  }
+
+  function paperEnsureRoot() {
+    let root = document.getElementById('paper-root');
+    if (root) return root;
+    root = document.createElement('div');
+    root.className = 'paper-root';
+    root.id = 'paper-root';
+    root.innerHTML = paperTopbarHTML() +
+      '<div class="np-stage"><div class="np-track" id="np-track"></div></div>' +
+      '<div class="np-hint">← → 翻版 · 点版面右/左侧翻页 · L 换语言 · Esc 切回三栏</div>';
+    document.body.appendChild(root);
+    paperAdoptControls();
+
+    const rootEl = root;
+    const go = d => paperGoto(paperIndex + d);
+    rootEl.querySelector('#np-prev').addEventListener('click', () => go(-1));
+    rootEl.querySelector('#np-next').addEventListener('click', () => go(1));
+    rootEl.querySelector('#np-exit').addEventListener('click', () => togglePaper(false));
+    rootEl.querySelector('#np-print').addEventListener('click', () => window.print());
+    const exBtn = rootEl.querySelector('#np-exam');
+    if (exBtn) exBtn.addEventListener('click', () => { if (window.openExamHub) window.openExamHub(); });
+    // 语言切换：英文版 / 中文版两份独立报纸，各自从头版看起
+    rootEl.querySelector('#np-lang-en').addEventListener('click', () => paperSetLang('en'));
+    rootEl.querySelector('#np-lang-cn').addEventListener('click', () => paperSetLang('cn'));
+    rootEl.querySelector('#np-sum').addEventListener('click', () => { paperSumOpen = !paperSumOpen; paperApplyLayout(); });
+    rootEl.querySelector('#np-notes').addEventListener('click', () => {
+      paperNotesOpen = !paperNotesOpen;
+      // 展开时刷新一次列表（标注可能刚改过）
+      if (paperNotesOpen && typeof renderNotes === 'function') renderNotes();
+      paperApplyLayout();
+    });
+    rootEl.querySelector('#np-sd').addEventListener('click', () => paperBumpFont(-1));
+    rootEl.querySelector('#np-su').addEventListener('click', () => paperBumpFont(1));
+    rootEl.querySelector('#np-cols').addEventListener('click', () => paperCycleCols());
+    paperApplyFont();
+    // 点版面靠右/靠左处翻版（报纸随手翻页的手感）；点文字或按钮不触发
+    rootEl.querySelector('.np-stage').addEventListener('click', (e) => {
+      if (e.target.closest('a,button,input,label,.np-drawer,.notes-section,#float-menu,.np-vocab-box')) return;
+      if (window.getSelection && String(window.getSelection()).length) return;
+      if (e.target.closest('[contenteditable="true"]')) return;
+      const r = e.currentTarget.getBoundingClientRect();
+      if (e.clientX - r.left > r.width * 0.5) go(1); else go(-1);
+    });
+    return root;
+  }
+
+  function paperBumpFont(d) {
+    const v = Math.max(12, Math.min(24, (settings.paperFont || 16.5) + d));
+    settings.paperFont = v; saveSettings();
+    paperApplyFont();
+    scheduleHeightSync(true);
+    paperBuild();
+  }
+
+  // 栏数：1 → 2 → 3 → 1 循环。字号的颗粒是「行」，栏数的颗粒是「一行多长」，
+  // 这两件事最影响读报手感，所以都给一个一键入口而不是写死。
+  function paperCycleCols() {
+    const cur = paperColsPref();
+    const next = cur >= 3 ? 1 : cur + 1;
+    try { localStorage.setItem(PAPER_COLS_KEY, String(next)); } catch (e) {}
+    updatePaperColsBtn();
+    paperBuild();
+    showTopToast('版面改成 ' + next + ' 栏');
+  }
+  function updatePaperColsBtn() {
+    const b = document.getElementById('np-cols');
+    if (b) b.textContent = '栏 ' + paperColsPref();
+  }
+
+  // ---------- 语言切换（英文版 ⇄ 中文版）----------
+  // 两份报纸在同一条轨道上（英文版 1..N 版，中文版 1..M 版）。版面**一次全部建好**，
+  // 所以切换只是「跳到另一本的第 1 版」——不重排、不刷新，只叠一次交叉淡入。
+  function paperApplyLang() {
+    const root = document.getElementById('paper-root');
+    const lang = paperLangGet();
+    const en = lang === 'en';
+    if (root) root.dataset.lang = lang;
+    // 报眉上的刊名 / 来源 / 日期 / 版次 也跟着换 —— 切换后看到的是一份「另一份报纸」
+    const { source, cnSource } = paperSource();
+    const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    setText('np-brand-name', en ? paperNameEn() : paperName());
+    setText('np-brand-sub', en ? (source || '') : (cnSource || source || ''));
+    setText('np-dl-ed', en ? 'ENGLISH EDITION' : '中 文 版');
+    setText('np-dl-date', en ? paperDateEn() : paperDateText());
+    const set = (id, isCur, missing, title) => {
+      const b = document.getElementById(id);
+      if (!b) return;
+      b.classList.toggle('active', isCur);
+      b.setAttribute('aria-pressed', isCur ? 'true' : 'false');
+      b.disabled = missing;
+      b.title = title;
+    };
+    const hasEn = !!paperLangRange('en'), hasCn = !!paperLangRange('cn');
+    set('np-lang-en', en, !hasEn, hasEn ? 'English edition' : '本篇没有英文版');
+    set('np-lang-cn', !en, !hasCn, hasCn ? '中文版（本文的对应翻译版）' : '本篇没有中文版');
+    updatePaperColsBtn();
+  }
+  let paperLangFxTimer = null;
+  function paperLangFx() {
+    const root = document.getElementById('paper-root');
+    if (!root) return;
+    root.classList.remove('np-lang-swap');
+    void root.offsetWidth;
+    root.classList.add('np-lang-swap');
+    clearTimeout(paperLangFxTimer);
+    paperLangFxTimer = setTimeout(() => root.classList.remove('np-lang-swap'), 460);
+  }
+  function paperSetLang(lang, opts) {
+    if (PAPER_LANGS.indexOf(lang) < 0) return;
+    const range = paperLangRange(lang);
+    if (!range) { showTopToast(lang === 'cn' ? '本篇没有中文版' : '本篇没有英文版'); return; }
+    const changed = paperLangGet() !== lang;
+    paperSetLangPref(lang);
+    if (changed && !(opts && opts.silent) && !paperMotionOff()) paperLangFx();
+    paperGoto(range.from, { silent: true });
+    paperApplyLang();
+    if (changed && !(opts && opts.silent)) {
+      showTopToast(lang === 'cn' ? '已切到中文版（本文的对应翻译版）' : 'Switched to the English edition');
+    }
+  }
+
+  // 报纸模式下把「标题区 / 概要 / 中文 / 笔记」的显隐同步到报纸版式
+  // repaginate=false 用于「正在分版中」的调用，避免互相触发成死循环
+  // ⚠ 「导读」与「剪报本」两个抽屉都用独立的运行时状态（paperSumOpen / paperNotesOpen），
+  //   **默认都是关闭的**、不跟 settings.showSummary / settings.showNotes 走：
+  //   后两者默认 true（三栏视图默认显示概要列与笔记条），若沿用就会一进报纸版
+  //   两个抽屉自己拉开、盖住半边纸面 —— 报纸阅读页一打开应该就是干干净净一张报。
+  let paperBuilding = false;
+  let paperSumOpen = false;
+  let paperNotesOpen = false;
+  function paperApplyLayout(repaginate) {
+    const root = document.getElementById('paper-root');
+    if (!root) return;
+    // 「标题区显隐」在报纸版里控制报头 + 主标题区（否则这个开关在报纸模式下点了没反应）
+    const noHead = !settings.showHeader;
+    const headChanged = root.classList.contains('no-head') !== noHead;
+    root.classList.toggle('no-head', noHead);
+    // ⚠ 「中文」不再是一个显隐开关 —— 中文版是一份独立的报纸，由报眉的 EN / 中文 切换。
+    //   过去那套 no-cn / m-en / m-cn / m-sum 的四态类已废弃（它会把另一本整个藏掉）。
+    const sm = root.querySelector('#np-sum');
+    if (sm) sm.classList.toggle('active', paperSumOpen);
+    const col = document.querySelector('.summary-col');
+    if (col) col.classList.toggle('np-open', paperSumOpen);
+    const nb = root.querySelector('#np-notes');
+    if (nb) nb.classList.toggle('active', paperNotesOpen);
+    const ns = document.querySelector('.notes-section');
+    if (ns) ns.classList.toggle('collapsed', !paperNotesOpen);
+    // 标题区一收，正文可用高度就变了，必须重新分版
+    if (headChanged && repaginate !== false && !paperBuilding) {
+      if (typeof window.__paperRepaginate === 'function') window.__paperRepaginate();
+    }
+  }
+
+  function paperEnter() {
+    if (!paperRestore) paperRestore = paperCapture();
+    if (!paperRestore) return;
+    paperEnsureRoot();
+    document.body.classList.add('paper-open');
+    const cap = paperRestore;
+    // 原列交给报纸接管：摘掉 col-body 类并清空，避免选择器出现两个同名容器
+    cap.en.className = 'np-source';
+    cap.cn.className = 'np-source';
+    paperBuild();
+    // 进入时若正在看某段，落到对应版
+    updatePaperButtons();
+  }
+
+  function paperExit() {
+    const cap = paperRestore;
+    const root = document.getElementById('paper-root');
+    if (cap) {
+      // ① 先清掉「分版时才注入的合成块」（如精读提示框 .np-digest）——
+      //    它们不是原文元素，回收时会污染原列。
+      const enSet = new Set(cap.enKids), cnSet = new Set(cap.cnKids);
+      if (root) {
+        root.querySelectorAll('.np-body').forEach(b => {
+          Array.prototype.slice.call(b.children).forEach(k => {
+            if (!enSet.has(k) && !cnSet.has(k)) k.remove();
+          });
+        });
+      }
+      // ② 再按原始子节点顺序把真实元素放回去
+      cap.enKids.forEach(k => cap.en.appendChild(k));
+      cap.cnKids.forEach(k => cap.cn.appendChild(k));
+      // ③ 清理分版时贴上的类
+      cap.en.className = cap.enClass;
+      cap.cn.className = cap.cnClass;
+      cap.enKids.forEach(k => { if (k.classList && k.classList.contains('np-quote')) k.classList.remove('np-quote'); });
+      cap.cnKids.forEach(k => { if (k.classList && k.classList.contains('np-quote')) k.classList.remove('np-quote'); });
+      paperRestore = null;
+    }
+    // ⚠ 必须先把报眉里借来的东西（四个下拉菜单 + 时钟）搬回底栏，再删报纸层 ——
+    //   否则它们会随 paper-root 一起被移除，底栏就永久丢了入口。
+    paperReleaseControls();
+    if (root) root.remove();
+    paperPages = []; paperIndex = 0;
+    document.body.classList.remove('paper-open');
+    clearTimeout(paperTurnTimer);
+    paperSumOpen = false;
+    paperNotesOpen = false;
+    document.querySelector('.summary-col')?.classList.remove('np-open');
+    // 笔记条在三栏视图里由 settings.showNotes 决定，退出报纸版要还原回去
+    const nsBack = document.querySelector('.notes-section');
+    if (nsBack) nsBack.classList.toggle('collapsed', !settings.showNotes);
+    updatePaperButtons();
+    // 三栏视图恢复后需要重新对齐列高
+    lastSyncedWidth = -1;
+    scheduleHeightSync(true);
+  }
+
+  // 「偏好」不等于「已进入」：首屏偏好就是 paper，但版面尚未构建。
+  // 用独立状态位判断，否则会把首次进入当成重复调用而直接返回。
+  let paperEntered = false;
+  function paperIsOpen() { return paperEntered; }
+
+  function togglePaper(force) {
+    const want = force === undefined ? !paperEntered : !!force;
+    if (want === paperEntered) return;
+    if (want) {
+      paperEntered = true;
+      paperSetView(PAPER_VIEW);
+      paperEnter();
+      if (!initializing) showTopToast('报纸版：← → 翻版，点版面左右翻页，Esc 切回三栏');
+    } else {
+      paperEntered = false;
+      paperSetView('reader');
+      paperExit();
+      if (!initializing) showTopToast('已切到三栏对照视图');
+    }
+  }
+  function updatePaperButtons() {
+    const on = paperEntered;
+    const btn = document.getElementById('paper-mode-btn');
+    if (btn) btn.classList.toggle('active', on);
+    const btn2 = document.getElementById('reader-mode-btn');
+    if (btn2) btn2.classList.toggle('active', !on);
+  }
+
+  // ---------- 翻报动画 ----------
+  // 光让轨道横向平移（translateX）看着就是「切换」而不是「翻报纸」。
+  // 这里在平移之上再叠一层纸面翻掀：旧版绕右边折走、新版绕左边铺下来，
+  // 配合 .np-stage 的 perspective 就有翻页的立体感。
+  // ⚠ 动画类要在「强制重排」之后再加，否则连续翻版时同名动画不会重播。
+  let paperTurnTimer = null;
+  function paperMotionOff() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+  function paperTurnFx(prevIdx, nextIdx) {
+    const pages = paperPages;
+    pages.forEach(p => p.classList.remove('np-turn-in', 'np-turn-out'));
+    if (prevIdx === nextIdx) return;
+    const out = pages[prevIdx], inn = pages[nextIdx];
+    if (!out && !inn) return;
+    // 强制重排：让刚移除的动画类生效，下一次添加才会重新触发动画
+    void (inn || out).offsetWidth;
+    if (out) out.classList.add('np-turn-out');
+    if (inn) inn.classList.add('np-turn-in');
+    clearTimeout(paperTurnTimer);
+    paperTurnTimer = setTimeout(() => {
+      pages.forEach(p => p.classList.remove('np-turn-in', 'np-turn-out'));
+    }, 700);
+  }
+
+  function paperGoto(n, opts) {
+    if (!paperPages.length) return;
+    // 翻版被限制在「当前这一份报纸」里：翻到边界就停，永远不会翻进另一份报纸。
+    // 语言只能由报眉的 EN / 中文 切换 —— 这是「两份相互独立的报纸」的落点。
+    const rng = paperLangRange(paperLangGet()) || { from: 0, to: paperPages.length - 1 };
+    const prevIdx = paperIndex;
+    paperIndex = Math.max(rng.from, Math.min(rng.to, n));
+    const track = document.getElementById('np-track');
+    if (track) track.style.transform = 'translateX(' + (-paperIndex * 100) + '%)';
+    paperPages.forEach((p, k) => p.classList.toggle('is-current', k === paperIndex));
+    const pos = document.getElementById('np-pos');
+    // 页码是「这一份报纸内部」的页序，不是整条轨道的序号
+    if (pos) pos.textContent = (paperIndex - rng.from + 1) + ' / ' + (rng.to - rng.from + 1);
+    const prev = document.getElementById('np-prev'), next = document.getElementById('np-next');
+    if (prev) prev.disabled = paperIndex === rng.from;
+    if (next) next.disabled = paperIndex === rng.to;
+    // 首次建版 / 字号重排 / 显式要求时不要动画（否则一进报纸版就凭空翻一下）
+    if (!(opts && opts.silent) && !paperMotionOff()) paperTurnFx(prevIdx, paperIndex);
+    updateProgressBar();
+  }
+  function paperNext() { paperGoto(paperIndex + 1); }
+  function paperPrev() { paperGoto(paperIndex - 1); }
+  // 当前版第一段的 para-idx（阅读位置记录用）。中文版同理 —— 两本都用 .np-body 里的真实段落。
+  function paperCurrentParaIdx() {
+    const p = paperPages[paperIndex];
+    if (!p) return null;
+    const first = p.querySelector('.np-body p[data-para-idx]');
+    return first ? parseInt(first.dataset.paraIdx, 10) : null;
+  }
+  // 跳到含某段的版。先在本语言那一本里找（阅读位置是跟着当前那份报纸记的），
+  // 找不到再全局兜底（例如该段只存在于另一本）。
+  function paperGotoParaIdx(idx) {
+    const sel = '.np-body p[data-para-idx="' + idx + '"]';
+    const rng = paperLangRange(paperLangGet()) || { from: 0, to: paperPages.length - 1 };
+    for (let i = rng.from; i <= rng.to; i++) {
+      if (paperPages[i] && paperPages[i].querySelector(sel)) { paperGoto(i); return true; }
+    }
+    for (let i = 0; i < paperPages.length; i++) {
+      if (paperPages[i].querySelector(sel)) { paperSetLang(paperLangOf(i), { silent: true }); paperGoto(i); return true; }
+    }
+    return false;
+  }
+
+  // ---------- 键盘 / 触屏 / 尺寸 ----------
+  document.addEventListener('keydown', (e) => {
+    if (!paperModeOn()) return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) return;
+    if (document.getElementById('search-panel')?.classList.contains('visible')) return;
+    if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); paperNext(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); paperPrev(); }
+    else if (e.key === 'l' || e.key === 'L') { e.preventDefault(); paperSetLang(paperLangGet() === 'en' ? 'cn' : 'en'); }
+    else if (e.key === 'Escape') { e.preventDefault(); togglePaper(false); }
+  });
+  (function paperSwipe() {
+    let x0 = null, y0 = null;
+    document.addEventListener('touchstart', (e) => {
+      if (!paperModeOn() || e.touches.length !== 1) return;
+      x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+    }, { passive: true });
+    document.addEventListener('touchend', (e) => {
+      if (!paperModeOn() || x0 === null) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - x0, dy = t.clientY - y0;
+      x0 = null;
+      if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.4) { if (dx < 0) paperNext(); else paperPrev(); }
+    }, { passive: true });
+  })();
+  window.addEventListener('resize', () => {
+    if (!paperModeOn()) return;
+    clearTimeout(paperResizeTimer);
+    paperResizeTimer = setTimeout(() => { if (paperModeOn()) paperBuild(); }, 320);
+  });
+
+  window.togglePaper = togglePaper;
+  window.paperNext = paperNext;
+  window.paperPrev = paperPrev;
+  window.paperModeOn = paperModeOn;
+  window.paperIsOpen = paperIsOpen;
+  window.paperPageIndex = paperPageIndex;
+  window.paperPageCount = paperPageCount;
+  window.paperCurrentParaIdx = paperCurrentParaIdx;
+  window.paperGotoParaIdx = paperGotoParaIdx;
+  window.paperApplyLayout = paperApplyLayout;
+  window.paperSetLang = paperSetLang;
+  window.paperLangGet = paperLangGet;
+  window.paperCycleCols = paperCycleCols;
+  window.__paperRepaginate = () => { if (paperModeOn()) paperBuild(); };
+
+  // ===== 精读分析台（错题本 / 能力雷达 / 段落功能 / 生词网络）=====
+  //
+  // ⚠ 这一组功能全部**复用既有存储**，不新建并行数据源：
+  //   · 错题本读既有的 4 个错题库（wsj_exam / wsj_cloze / wsj_newtype / wsj_translation），
+  //     只额外加一个「复习调度」侧车键（wsj_wrongrev），不动既有记录的字段；
+  //   · 能力雷达直接聚合 wsj_exam:history 里的 perQ[].type —— 每道题的题型早已逐题落库；
+  //   · 段落功能走既有 annotations:<articleId>，新增一个 bucket='paraFunc'；
+  //   · 生词网络从 registry + annotations:<篇> 现场推导，**不建 vocab:index 索引**（避免第二份真相）。
+  //
+  // ⚠ 编号 11 只是模块序号；它必须排在 10-toolbar.js **之前**（后者负责收尾并定义 window.__reader）。
+
+  // ---------- 小工具 ----------
+  function insToday() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function insAddDays(n) {
+    const d = new Date(); d.setDate(d.getDate() + n);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function insLoad(key, fb) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fb; } catch (e) { return fb; } }
+  function insSave(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {} }
+  function insRegistry() { return insLoad('wsj_reader:registry', []) || []; }
+  // registry 的 id 就是**页面文件名**（这一点全项目一致，别换成 slug）
+  function insTitleOf(fileId) {
+    const r = insRegistry().find(x => x.id === fileId);
+    if (r && r.title) return r.title;
+    if (fileId === articleId) return getShortTitle();
+    return String(fileId || '').replace(/_EN-CN_final\.html$/, '').replace(/_/g, ' ');
+  }
+  function insSlugOf(fileId) {
+    const r = insRegistry().find(x => x.id === fileId);
+    return (r && r.slug) || (fileId === articleId ? articleMeta.slug : '');
+  }
+  function insPageUrl(fileId) {
+    return location.pathname.replace(/[^/]+$/, '') + fileId;
+  }
+
+  // ---------- 通用浮层面板（沿用 .syntax-panel 基类 + .visible，与既有面板同一套皮肤）----------
+  function insPanel(id, title, extraHead) {
+    let p = document.getElementById(id);
+    if (p) return p;
+    p = document.createElement('div');
+    p.id = id;
+    p.className = 'syntax-panel insight-panel';
+    p.innerHTML =
+      '<div class="syntax-header"><h3>' + esc(title) + '</h3>' +
+      '<button type="button" data-close="1" title="关闭">✕</button></div>' +
+      '<div class="insight-body" id="' + id + '-body"></div>' +
+      '<div class="syntax-actions">' + (extraHead || '') +
+      '<button type="button" data-close="1">关闭</button></div>';
+    document.body.appendChild(p);
+    p.querySelectorAll('[data-close]').forEach(b =>
+      b.addEventListener('click', () => p.classList.remove('visible')));
+    return p;
+  }
+  function insOpen(p) { p.classList.add('visible'); }
+
+  // ==========================================================================
+  // F04 错题本 + 间隔重复
+  // ==========================================================================
+  // 4 个错题库各自独立（历史遗留），这里做一层**只读适配**合并成统一视图。
+  // 只有「阅读理解」的库里带题干与选项（exam.js 写入），因此只有它能就地重做；
+  // 其余三类给出「回原练习页重做」的跳转 —— 不假装能重做。
+  const WRONG_STORES = [
+    { key: 'wsj_exam:wrongs', label: '阅读理解', page: s => 'exam_' + s + '.html' },
+    { key: 'wsj_cloze:wrongs', label: '完形填空', page: s => 'cloze_' + s + '.html' },
+    { key: 'wsj_newtype:wrongs', label: '新题型', page: s => 'newtype_' + s + '.html' },
+    { key: 'wsj_translation:wrongs', label: '翻译', page: s => 'translation_' + s + '.html' }
+  ];
+  const WRONG_CAUSES = {
+    vocab: '词汇', syntax: '长难句', logic: '逻辑', qtype: '题型', careless: '粗心', trans: '误译',
+    location: '定位错误', trap: '干扰项陷阱', 语境词: '语境词', 误译: '误译', 粗心: '粗心'
   };
+  const WRONG_REV_KEY = 'wsj_wrongrev';     // 侧车：{ '<store>|<key>': {n, nextDue, last, done} }
+  // 间隔序列（与项目既有复习语义对齐：答错回 1 天，答对逐步拉长）
+  const WRONG_STEPS = [1, 2, 4, 8, 16];
+  const WRONG_MASTER_N = 3;
+
+  function wrongRevAll() { return insLoad(WRONG_REV_KEY, {}) || {}; }
+  function wrongRevKey(store, key) { return store + '|' + String(key || ''); }
+  function wrongRevOf(w) { return wrongRevAll()[wrongRevKey(w.store, w.key)] || null; }
+  // 复习调度：答对递进、答错归零；连对 WRONG_MASTER_N 次标「已掌握」并移出队列
+  // （说明书写的「连对 2 次」太松 —— 错题只隔一天答对两次就出列，等于没复习；
+  //   项目既有的题型卡复习在「已掌握」后仍按 15 天复看，这里取折中：3 次出列但记录保留）
+  function wrongSchedule(w, wasCorrect) {
+    const all = wrongRevAll();
+    const k = wrongRevKey(w.store, w.key);
+    const r = all[k] || { n: 0, nextDue: insToday(), last: null, done: false };
+    if (wasCorrect) {
+      r.n = (r.n || 0) + 1;
+      if (r.n >= WRONG_MASTER_N) { r.done = true; r.nextDue = ''; }
+      else r.nextDue = insAddDays(WRONG_STEPS[Math.min(r.n, WRONG_STEPS.length - 1)]);
+    } else {
+      r.n = 0; r.done = false; r.nextDue = insAddDays(1);
+    }
+    r.last = new Date().toISOString();
+    all[k] = r; insSave(WRONG_REV_KEY, all);
+    return r;
+  }
+  function collectWrongs() {
+    const out = [];
+    WRONG_STORES.forEach(st => {
+      (insLoad(st.key, []) || []).forEach(r => {
+        if (!r || !r.key) return;
+        const rev = wrongRevOf({ store: st.key, key: r.key });
+        out.push({
+          store: st.key, storeLabel: st.label, key: r.key, page: st.page,
+          slug: r.slug || '', title: r.title || insTitleOf('') ,
+          no: r.no, type: r.type || r.kind || '', mode: r.mode || '',
+          myAnswer: r.myAnswer || '', answer: r.answer || '', cause: r.cause || '',
+          at: r.at || '', stem: r.stem || '', options: r.options || {},
+          analysis: r.analysis || '', refs: r.refs || [],
+          rev: rev, due: !rev || (!rev.done && (!rev.nextDue || rev.nextDue <= insToday())),
+          redo: !!(r.stem && r.options && Object.keys(r.options).length)
+        });
+      });
+    });
+    out.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    return out;
+  }
+  // 供 07-wordfreq.js 的 dueReviewCount() 合并统计（工具栏角标同时算生词与错题）
+  function dueWrongCount() {
+    return collectWrongs().filter(w => !w.rev || (!w.rev.done && w.rev.nextDue && w.rev.nextDue <= insToday())).length;
+  }
+  function wrongStats(list) {
+    let due = 0, done = 0, fresh = 0;
+    list.forEach(w => {
+      if (w.rev && w.rev.done) { done++; return; }
+      if (!w.rev || !w.rev.last) fresh++;
+      if (w.due) due++;
+    });
+    return { total: list.length, due: due, done: done, fresh: fresh };
+  }
+  let wrongFilter = { scope: 'due', type: '', cause: '' };
+  function openWrongBook() {
+    const p = insPanel('wrongbook-panel', '📕 错题本');
+    insOpen(p);
+    renderWrongBook();
+    // 首次绑事件（渲染是整块重建，用事件委托一次绑好）
+    const body = document.getElementById('wrongbook-panel-body');
+    if (!body.dataset.wired) {
+      body.dataset.wired = '1';
+      body.addEventListener('click', e => {
+        const t = e.target;
+        const scope = t.closest && t.closest('[data-wscope]');
+        if (scope) { wrongFilter.scope = scope.dataset.wscope; renderWrongBook(); return; }
+        const redo = t.closest && t.closest('[data-wredo]');
+        if (redo) { startWrongRedo(redo.dataset.wredo); return; }
+        const pick = t.closest && t.closest('[data-wpick]');
+        if (pick) { submitWrongRedo(pick.dataset.wpick, pick.dataset.wopt); return; }
+        const back = t.closest && t.closest('[data-wback]');
+        if (back) { renderWrongBook(); return; }
+      });
+      body.addEventListener('change', e => {
+        const t = e.target;
+        if (t && t.dataset && t.dataset.wfilter === 'type') { wrongFilter.type = t.value; renderWrongBook(); }
+        if (t && t.dataset && t.dataset.wfilter === 'cause') { wrongFilter.cause = t.value; renderWrongBook(); }
+      });
+    }
+  }
+  let wrongRedoUid = null;
+  function renderWrongBook() {
+    const body = document.getElementById('wrongbook-panel-body');
+    if (!body) return;
+    const all = collectWrongs();
+    const s = wrongStats(all);
+    const types = Array.from(new Set(all.map(w => w.type).filter(Boolean))).sort();
+    const causes = Array.from(new Set(all.map(w => w.cause).filter(Boolean)));
+    let list = all;
+    if (wrongFilter.scope === 'due') list = all.filter(w => w.due);
+    else if (wrongFilter.scope === 'done') list = all.filter(w => w.rev && w.rev.done);
+    if (wrongFilter.type) list = list.filter(w => w.type === wrongFilter.type);
+    if (wrongFilter.cause) list = list.filter(w => w.cause === wrongFilter.cause);
+
+    const chip = (val, cur, attr, label) =>
+      '<button type="button" class="ins-chip' + (val === cur ? ' active' : '') + '" ' + attr + '="' + esc(val) + '">' +
+      esc(label) + '</button>';
+
+    let html =
+      '<div class="ins-kpi">' +
+      '<div class="ins-kpi-item"><b>' + s.total + '</b><span>总错题</span></div>' +
+      '<div class="ins-kpi-item hot"><b>' + s.due + '</b><span>待复习</span></div>' +
+      '<div class="ins-kpi-item"><b>' + s.done + '</b><span>已掌握</span></div>' +
+      '<div class="ins-kpi-item"><b>' + s.fresh + '</b><span>未复习过</span></div>' +
+      '</div>' +
+      '<div class="ins-filters">' +
+      chip('due', wrongFilter.scope, 'data-wscope', '待复习') +
+      chip('all', wrongFilter.scope, 'data-wscope', '全部') +
+      chip('done', wrongFilter.scope, 'data-wscope', '已掌握') +
+      (types.length ? '<select data-wfilter="type"><option value="">题型：全部</option>' +
+        types.map(t => '<option value="' + esc(t) + '"' + (t === wrongFilter.type ? ' selected' : '') + '>' + esc(t) + '</option>').join('') +
+        '</select>' : '') +
+      (causes.length ? '<select data-wfilter="cause"><option value="">错因：全部</option>' +
+        causes.map(t => '<option value="' + esc(t) + '"' + (t === wrongFilter.cause ? ' selected' : '') + '>' +
+          esc(WRONG_CAUSES[t] || t) + '</option>').join('') +
+        '</select>' : '') +
+      '</div>';
+
+    if (!list.length) {
+      html += '<div class="ins-empty">' +
+        (all.length ? '当前筛选下没有错题。' :
+          '还没有错题记录。<br><span class="ins-dim">做完一篇模拟考试，答错的题会自动进这里，并按间隔重复安排复习。</span>') +
+        '</div>';
+    } else {
+      html += '<div class="ins-list">' + list.map(w => {
+        const uid = esc(wrongRevKey(w.store, w.key));
+        const rev = w.rev || {};
+        const when = rev.last ? String(rev.last).replace('T', ' ').slice(0, 16) : '未复习';
+        const state = rev.done ? '<span class="ins-tag ok">已掌握</span>'
+          : (rev.nextDue ? '<span class="ins-tag' + (w.due ? ' due' : '') + '">' + (w.due ? '今日到期' : rev.nextDue + ' 复习') + '</span>' : '<span class="ins-tag">未开始</span>');
+        return '<div class="ins-row">' +
+          '<div class="ins-row-main">' +
+          '<div class="ins-row-title">' +
+          '<span class="ins-tag type">' + esc(w.storeLabel) + '</span>' +
+          (w.type ? '<span class="ins-tag">' + esc(w.type) + '</span>' : '') +
+          (w.cause ? '<span class="ins-tag cause">' + esc(WRONG_CAUSES[w.cause] || w.cause) + '</span>' : '') +
+          state +
+          '</div>' +
+          '<div class="ins-row-sub">' + esc(w.title || w.slug) + ' · 第 ' + esc(w.no) + ' 题' +
+          (w.myAnswer ? ' · 你选 ' + esc(w.myAnswer) : '') + (w.answer ? ' · 正确 ' + esc(w.answer) : '') +
+          ' · ' + esc(when) + (rev.n ? ' · 连对 ' + rev.n + ' 次' : '') + '</div>' +
+          (w.stem ? '<div class="ins-row-stem">' + esc(String(w.stem).slice(0, 160)) + '</div>' : '') +
+          '</div>' +
+          '<div class="ins-row-act">' +
+          (w.redo ? '<button type="button" class="ins-btn" data-wredo="' + uid + '">重做</button>' : '') +
+          (w.slug ? '<a class="ins-btn ghost" href="' + esc(w.page(w.slug)) + '" title="回到原练习页">原题</a>' : '') +
+          '</div>' +
+          '</div>';
+      }).join('') + '</div>';
+    }
+    if (wrongRedoUid) html = renderWrongRedoHTML(all.find(w => wrongRevKey(w.store, w.key) === wrongRedoUid));
+    body.innerHTML = html;
+  }
+  function startWrongRedo(uid) {
+    wrongRedoUid = uid;
+    renderWrongBook();
+    const body = document.getElementById('wrongbook-panel-body');
+    if (body) body.scrollTop = 0;
+  }
+  function renderWrongRedoHTML(w) {
+    if (!w) { wrongRedoUid = null; return '<div class="ins-empty">找不到这道题。</div>'; }
+    const opts = Object.keys(w.options || {});
+    return '<div class="ins-redo">' +
+      '<div class="ins-redo-head">' +
+      '<span class="ins-tag type">' + esc(w.storeLabel) + '</span>' +
+      '<b>' + esc(w.title || w.slug) + '</b><span class="ins-dim">第 ' + esc(w.no) + ' 题</span>' +
+      '</div>' +
+      '<div class="ins-redo-stem">' + esc(w.stem) + '</div>' +
+      '<div class="ins-redo-opts">' + opts.map(k =>
+        '<button type="button" class="ins-opt" data-wpick="' + esc(wrongRevKey(w.store, w.key)) + '" data-wopt="' + esc(k) + '">' +
+        '<b>' + esc(k) + '</b>' + esc(String(w.options[k]).replace(/^\s*[A-D][.、)]\s*/, '')) + '</button>').join('') +
+      '</div>' +
+      '<div class="ins-dim">答案已遮罩 —— 先自己判断，再点选项。提交后按间隔重复安排下次复习。</div>' +
+      '<div class="ins-actions"><button type="button" class="ins-btn ghost" data-wback="1">返回列表</button></div>' +
+      '</div>';
+  }
+  function submitWrongRedo(uid, pick) {
+    const w = collectWrongs().find(x => wrongRevKey(x.store, x.key) === uid);
+    if (!w) { wrongRedoUid = null; renderWrongBook(); return; }
+    const ok = String(pick) === String(w.answer);
+    const rev = wrongSchedule(w, ok);
+    wrongRedoUid = null;
+    renderWrongBook();
+    showTopToast(ok
+      ? '答对了 · ' + (rev.done ? '已掌握，移出复习队列' : '下次复习 ' + rev.nextDue)
+      : '还不对 · 1 天后再来（正确 ' + (w.answer || '—') + '）');
+  }
+
+  // ==========================================================================
+  // F13 六题型能力雷达图
+  // ==========================================================================
+  // 数据来自 wsj_exam:history 的 perQ[].type —— 每道题的题型早在交卷时就逐题落库了，
+  // **不需要**说明书里的 exam:stats:<articleId> 这种新键。
+  const RADAR_TYPES = ['细节', '推理', '主旨', '态度', '词义', '例证'];
+  function radarData() {
+    const hist = insLoad('wsj_exam:history', []) || [];
+    const acc = {};
+    RADAR_TYPES.forEach(t => { acc[t] = { total: 0, correct: 0 }; });
+    let other = 0, sessions = 0, answered = 0;
+    hist.forEach(h => {
+      if (!h || !Array.isArray(h.perQ) || !h.perQ.length) return;
+      sessions++;
+      h.perQ.forEach(q => {
+        if (!q || !q.mine) return;                  // 未作答不计入（考试态留空 ≠ 答错）
+        answered++;
+        const ok = String(q.mine) === String(q.right);
+        const t = String(q.type || '').trim();
+        if (acc[t]) { acc[t].total++; if (ok) acc[t].correct++; }
+        else other++;
+      });
+    });
+    return { acc: acc, other: other, sessions: sessions, answered: answered };
+  }
+  function radarSvg(acc, size) {
+    const N = RADAR_TYPES.length;
+    const cx = size / 2, cy = size / 2, R = size * 0.33;
+    const pt = (i, r) => {
+      const a = -Math.PI / 2 + (Math.PI * 2 * i) / N;
+      return [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
+    };
+    const ring = k => RADAR_TYPES.map((_, i) => pt(i, R * k).map(v => v.toFixed(1)).join(',')).join(' ');
+    const poly = RADAR_TYPES.map((t, i) => {
+      const d = acc[t];
+      const rate = d.total ? d.correct / d.total : 0;
+      return pt(i, Math.max(R * 0.02, R * rate)).map(v => v.toFixed(1)).join(',');
+    }).join(' ');
+    let s = '<svg class="ins-radar" viewBox="0 0 ' + size + ' ' + size + '" width="100%" role="img" aria-label="六题型正确率雷达图">';
+    [0.25, 0.5, 0.75, 1].forEach(k => {
+      s += '<polygon points="' + ring(k) + '" fill="none" stroke="currentColor" stroke-opacity="' + (k === 1 ? 0.35 : 0.14) + '" stroke-width="1"/>';
+    });
+    RADAR_TYPES.forEach((t, i) => {
+      const [x, y] = pt(i, R);
+      s += '<line x1="' + cx + '" y1="' + cy + '" x2="' + x.toFixed(1) + '" y2="' + y.toFixed(1) +
+        '" stroke="currentColor" stroke-opacity="0.18" stroke-width="1"/>';
+      const [lx, ly] = pt(i, R + 26);
+      const d = acc[t];
+      const pct = d.total ? Math.round(d.correct / d.total * 100) : 0;
+      s += '<text x="' + lx.toFixed(1) + '" y="' + (ly - 5).toFixed(1) + '" text-anchor="middle" font-size="12" fill="currentColor">' + esc(t) + '</text>';
+      s += '<text x="' + lx.toFixed(1) + '" y="' + (ly + 9).toFixed(1) + '" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.6">' +
+        (d.total ? pct + '%' : '—') + '</text>';
+    });
+    s += '<polygon points="' + poly + '" fill="var(--accent)" fill-opacity="0.22" stroke="var(--accent)" stroke-width="1.5"/>';
+    RADAR_TYPES.forEach((t, i) => {
+      const d = acc[t];
+      if (!d.total) return;
+      const [x, y] = pt(i, Math.max(R * 0.02, R * (d.correct / d.total)));
+      s += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="2.6" fill="var(--accent)"/>';
+    });
+    s += '</svg>';
+    return s;
+  }
+  function openRadar() {
+    const p = insPanel('radar-panel', '📡 六题型能力雷达');
+    insOpen(p);
+    const body = document.getElementById('radar-panel-body');
+    if (!body) return;
+    const d = radarData();
+    let html = '';
+    if (!d.answered) {
+      html = '<div class="ins-empty">还没有可统计的作答记录。<br>' +
+        '<span class="ins-dim">做完任意一篇模拟考试（交卷后）就会按题型统计到这里。</span></div>';
+    } else {
+      html = '<div class="ins-radar-wrap">' + radarSvg(d.acc, 300) + '</div>' +
+        '<div class="ins-kpi">' +
+        '<div class="ins-kpi-item"><b>' + d.sessions + '</b><span>考试次数</span></div>' +
+        '<div class="ins-kpi-item"><b>' + d.answered + '</b><span>已作答题数</span></div>' +
+        (d.other ? '<div class="ins-kpi-item"><b>' + d.other + '</b><span>其他题型</span></div>' : '') +
+        '</div>' +
+        '<table class="ins-table"><thead><tr><th>题型</th><th>答对 / 作答</th><th>正确率</th><th>薄弱</th></tr></thead><tbody>' +
+        RADAR_TYPES.map(t => {
+          const x = d.acc[t];
+          const rate = x.total ? x.correct / x.total : 0;
+          const pct = x.total ? Math.round(rate * 100) : 0;
+          return '<tr' + (x.total && pct < 60 ? ' class="weak"' : '') + '><td>' + esc(t) + '</td>' +
+            '<td>' + (x.total ? x.correct + ' / ' + x.total : '—') + '</td>' +
+            '<td>' + (x.total ? pct + '%' : '—') + '</td>' +
+            '<td>' + (x.total && pct < 60 ? '需要加练' : '') + '</td></tr>';
+        }).join('') +
+        '</tbody></table>' +
+        '<div class="ins-dim">数据来源：本地成绩记录（不联网）。未作答的题不计入正确率；只统计六大阅读题型，' +
+        '完形 / 新题型 / 翻译的题型另行归类。</div>';
+    }
+    body.innerHTML = html;
+  }
+
+  // ==========================================================================
+  // F02 段落功能标签
+  // ==========================================================================
+  const PARA_FUNCS = [
+    ['argument', '论点'], ['evidence', '论据'], ['transition', '转折'],
+    ['conclusion', '结论'], ['background', '背景'], ['example', '例证']
+  ];
+  const PARA_FUNC_MAP = {};
+  PARA_FUNCS.forEach(f => { PARA_FUNC_MAP[f[0]] = f[1]; });
+  // 一段只保留一个功能标签
+  function paraFuncIdxList() {
+    const set = new Set();
+    document.querySelectorAll('.col-body.en p[data-para-idx]').forEach(p => set.add(String(p.dataset.paraIdx)));
+    return Array.from(set).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+  }
+  function paraFuncOf(idx) {
+    const a = annotations.find(x => x.bucket === 'paraFunc' && String(x.paraIdx) === String(idx));
+    return a ? a.func : '';
+  }
+  function setParaFunc(idx, func) {
+    annotations = annotations.filter(a => !(a.bucket === 'paraFunc' && String(a.paraIdx) === String(idx)));
+    if (func) {
+      annotations.push({
+        id: genId(), type: 'paraFunc', bucket: 'paraFunc',
+        text: '第 ' + idx + ' 段', paraIdx: Number(idx), func: func,
+        createdAt: new Date().toISOString()
+      });
+    }
+    saveAnnotations();
+    renderParaFuncs();
+    showTopToast(func ? '第 ' + idx + ' 段标为「' + (PARA_FUNC_MAP[func] || func) + '」' : '已清除第 ' + idx + ' 段的功能标签');
+  }
+  // 标签做成「内容为空的 span + CSS content」，这样 textContent 不掺字：
+  // 导出 Markdown / 复制正文 / 词频统计都不会把「论点」当成正文。
+  function renderParaFuncs() {
+    const map = {};
+    annotations.forEach(a => { if (a.bucket === 'paraFunc' && a.paraIdx) map[String(a.paraIdx)] = a.func; });
+    document.querySelectorAll('.col-body.en p[data-para-idx], .col-body.cn p[data-para-idx]').forEach(p => {
+      const idx = String(p.dataset.paraIdx);
+      Array.prototype.slice.call(p.querySelectorAll('.pfunc-chip')).forEach(c => c.remove());
+      const f = map[idx];
+      if (!f) { delete p.dataset.paraFunc; return; }
+      p.dataset.paraFunc = f;
+      const chip = document.createElement('span');
+      chip.className = 'pfunc-chip';
+      chip.setAttribute('data-pfunc', PARA_FUNC_MAP[f] || f);
+      chip.setAttribute('contenteditable', 'false');
+      chip.title = '段落功能：' + (PARA_FUNC_MAP[f] || f) + '（点击修改）';
+      chip.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); openParaFuncPanel(idx); });
+      p.insertBefore(chip, p.firstChild);
+    });
+  }
+  function openParaFuncPanel(focusIdx) {
+    const p = insPanel('pfunc-panel', '🏷 段落功能标签');
+    insOpen(p);
+    const body = document.getElementById('pfunc-panel-body');
+    if (!body) return;
+    const idxs = paraFuncIdxList();
+    if (!idxs.length) {
+      body.innerHTML = '<div class="ins-empty">没有找到正文段落。</div>';
+      return;
+    }
+    const count = {};
+    PARA_FUNCS.forEach(f => { count[f[0]] = 0; });
+    annotations.forEach(a => { if (a.bucket === 'paraFunc' && count[a.func] !== undefined) count[a.func]++; });
+    body.innerHTML =
+      '<div class="ins-dim">给每段标一个功能：读结构、写作文、做新题型都用得上。标签存本篇，不写进正文。</div>' +
+      '<div class="ins-filters">' + PARA_FUNCS.map(f =>
+        '<span class="ins-chip legend f-' + f[0] + '">' + esc(f[1]) + ' ' + count[f[0]] + '</span>').join('') +
+      '</div>' +
+      '<div class="ins-list">' + idxs.map(i => {
+        const f = paraFuncOf(i);
+        const p0 = document.querySelector('.col-body.en p[data-para-idx="' + i + '"]');
+        const preview = p0 ? String(p0.textContent || '').replace(/\s+/g, ' ').slice(0, 70) : '';
+        return '<div class="ins-row' + (String(i) === String(focusIdx) ? ' focus' : '') + '" data-pfrow="' + i + '">' +
+          '<div class="ins-row-main"><div class="ins-row-sub"><b>第 ' + i + ' 段</b> ' + esc(preview) + '…</div></div>' +
+          '<div class="ins-row-act">' +
+          '<select data-pfsel="' + i + '"><option value="">— 未标注 —</option>' +
+          PARA_FUNCS.map(x => '<option value="' + x[0] + '"' + (f === x[0] ? ' selected' : '') + '>' + x[1] + '</option>').join('') +
+          '</select>' +
+          '<button type="button" class="ins-btn ghost" data-pfgoto="' + i + '">定位</button>' +
+          '</div></div>';
+      }).join('') + '</div>';
+    if (!body.dataset.wired) {
+      body.dataset.wired = '1';
+      body.addEventListener('change', (e) => {
+        const t = e.target;
+        if (t && t.dataset && t.dataset.pfsel) setParaFunc(t.dataset.pfsel, t.value);
+      });
+      body.addEventListener('click', (e) => {
+        const g = e.target.closest && e.target.closest('[data-pfgoto]');
+        if (g) jumpToPara(g.dataset.pfgoto);
+      });
+    }
+    const row = body.querySelector('[data-pfrow="' + focusIdx + '"]');
+    if (row) row.scrollIntoView({ block: 'center' });
+  }
+
+  // ==========================================================================
+  // F07 跨文章生词网络（+ F12 素材来源跳转共用这段跳转逻辑）
+  // ==========================================================================
+  // ⚠ 不建 vocab:index：词表完全可以由 registry + 各篇 annotations:<篇> 现场推导，
+  //   再存一份索引就是第二份真相，还要考虑失效与迁移。
+  function vocabOccurrences(word) {
+    const w = String(word || '').trim().toLowerCase();
+    if (!w) return [];
+    const ids = insRegistry().map(r => r.id).filter(Boolean);
+    if (ids.indexOf(articleId) < 0) ids.push(articleId);
+    const out = [], seen = new Set();
+    ids.forEach(id => {
+      (insLoad('annotations:' + id, []) || []).forEach(a => {
+        if (!a || a.bucket !== 'vocab' || !a.text) return;
+        if (String(a.text).trim().toLowerCase() !== w) return;
+        const k = id + '|' + (a.paraIdx || '?');
+        if (seen.has(k)) return;
+        seen.add(k);
+        out.push({ id: id, paraIdx: a.paraIdx || '', context: a.context || '' });
+      });
+    });
+    out.sort((a, b) => (a.id === articleId ? -1 : b.id === articleId ? 1 : 0));
+    return out;
+  }
+  function allVocabWords() {
+    const ids = insRegistry().map(r => r.id).filter(Boolean);
+    if (ids.indexOf(articleId) < 0) ids.push(articleId);
+    const map = {};   // lower → { word, articles:Set, mine:bool }
+    ids.forEach(id => {
+      (insLoad('annotations:' + id, []) || []).forEach(a => {
+        if (!a || a.bucket !== 'vocab' || !a.text) return;
+        const k = String(a.text).trim().toLowerCase();
+        if (!k) return;
+        if (!map[k]) map[k] = { word: String(a.text).trim(), articles: new Set(), mine: false };
+        map[k].articles.add(id);
+        if (id === articleId) map[k].mine = true;
+      });
+    });
+    return Object.keys(map).map(k => ({ word: map[k].word, n: map[k].articles.size, mine: map[k].mine }))
+      .sort((a, b) => b.n - a.n || a.word.localeCompare(b.word));
+  }
+  let vocabNetQuery = '';
+  function openVocabNet(focusWord) {
+    const p = insPanel('vocabnet-panel', '🕸 生词网络');
+    insOpen(p);
+    if (focusWord) vocabNetQuery = String(focusWord);
+    renderVocabNet();
+    const body = document.getElementById('vocabnet-panel-body');
+    if (!body.dataset.wired) {
+      body.dataset.wired = '1';
+      body.addEventListener('input', (e) => {
+        if (e.target && e.target.id === 'vocabnet-q') { vocabNetQuery = e.target.value; renderVocabNet(true); }
+      });
+      body.addEventListener('click', (e) => {
+        const j = e.target.closest && e.target.closest('[data-vjump]');
+        if (j) { jumpToRef(j.dataset.vjump, j.dataset.vpara); return; }
+        const expand = e.target.closest && e.target.closest('[data-vexp]');
+        if (expand) {
+          // ⚠ 不要用 CSS.escape + 属性选择器查行：jsdom 里 CSS.escape 未必存在，
+          //   直接从未被点的按钮往上找最近的 .ins-row 更稳。
+          const row = expand.closest('.ins-row');
+          const occ = row ? row.querySelector('.ins-occ') : null;
+          if (occ) occ.hidden = !occ.hidden;
+        }
+      });
+    }
+  }
+  function renderVocabNet(keepFocus) {
+    const body = document.getElementById('vocabnet-panel-body');
+    if (!body) return;
+    const q = vocabNetQuery.trim().toLowerCase();
+    const words = allVocabWords().filter(w => !q || w.word.toLowerCase().indexOf(q) >= 0);
+    const cross = words.filter(w => w.n >= 2);
+    const mineOnly = words.filter(w => w.mine && w.n < 2);
+    const head =
+      '<div class="ins-search"><input id="vocabnet-q" type="search" placeholder="搜一个词…" value="' + esc(vocabNetQuery) + '"></div>' +
+      '<div class="ins-dim">同一篇里存过的生词会自动跨文章关联 —— 点位置直接跳到那篇文章那一段。</div>';
+    if (!words.length) {
+      body.innerHTML = head + '<div class="ins-empty">还没有生词记录。<br>' +
+        '<span class="ins-dim">阅读时选中单词 → 「生词」，就会进这张网。</span></div>';
+      return;
+    }
+    const rowHTML = w => {
+      const occ = vocabOccurrences(w.word);
+      const chips = occ.map(o =>
+        '<button type="button" class="ins-chip jump" data-vjump="' + esc(o.id) + '" data-vpara="' + esc(o.paraIdx) + '" title="' +
+        esc((o.context || '').slice(0, 90)) + '">' +
+        esc(insTitleOf(o.id).slice(0, 16)) + (o.paraIdx ? ' · 第' + esc(o.paraIdx) + '段' : '') + '</button>').join('');
+      return '<div class="ins-row" data-vrow="' + esc(w.word) + '">' +
+        '<div class="ins-row-main">' +
+        '<div class="ins-row-title"><b class="ins-word">' + esc(w.word) + '</b>' +
+        (w.n >= 2 ? '<span class="ins-tag ok">' + w.n + ' 篇复现</span>' : '<span class="ins-tag">仅 1 篇</span>') +
+        (w.mine ? '<span class="ins-tag type">本篇</span>' : '') +
+        '<button type="button" class="ins-btn ghost" data-vexp="' + esc(w.word) + '">位置</button>' +
+        '</div>' +
+        '<div class="ins-occ" hidden>' + chips + '</div>' +
+        '</div></div>';
+    };
+    body.innerHTML = head +
+      (cross.length ? '<div class="ins-section">跨篇复现（' + cross.length + '）</div><div class="ins-list">' +
+        cross.map(rowHTML).join('') + '</div>' : '') +
+      (mineOnly.length ? '<div class="ins-section">本篇生词（' + mineOnly.length + '）</div><div class="ins-list">' +
+        mineOnly.map(rowHTML).join('') + '</div>' : '');
+    if (keepFocus) { const i = body.querySelector('#vocabnet-q'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }
+  }
+  // 跳转到「另一篇文章的第 N 段」：带上 #para-N，目标页加载后由 initHashJump 定位
+  function jumpToRef(fileId, paraIdx) {
+    const h = paraIdx ? '#para-' + paraIdx : '';
+    if (fileId === articleId) { if (paraIdx) jumpToPara(paraIdx); return; }
+    location.href = insPageUrl(fileId) + h;
+  }
+  // 本页内跳到某段：报纸版走版次，三栏视图走滚动
+  function jumpToPara(idx) {
+    if (typeof paperIsOpen === 'function' && paperIsOpen() &&
+        typeof paperGotoParaIdx === 'function' && paperGotoParaIdx(String(idx))) {
+      flashPara(idx);
+      return true;
+    }
+    const p = document.querySelector('.col-body.en p[data-para-idx="' + idx + '"]') ||
+      document.querySelector('.col-body.cn p[data-para-idx="' + idx + '"]');
+    if (!p) return false;
+    p.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    flashPara(idx);
+    return true;
+  }
+  function flashPara(idx) {
+    document.querySelectorAll('.para-flash').forEach(el => el.classList.remove('para-flash'));
+    document.querySelectorAll('.col-body.en p[data-para-idx="' + idx + '"], .col-body.cn p[data-para-idx="' + idx + '"]')
+      .forEach(el => {
+        el.classList.add('para-flash');
+        setTimeout(() => el.classList.remove('para-flash'), 2600);
+      });
+  }
+  // 从别的页面跳进来时带 #para-N：等报纸版建好再定位（建版是异步的，太早找不到版）
+  function initHashJump() {
+    const m = /^#para-(\d+)$/.exec(String(location.hash || ''));
+    if (!m) return;
+    const idx = m[1];
+    let tries = 0;
+    const attempt = () => {
+      tries++;
+      const ok = jumpToPara(idx);
+      if (!ok && tries < 6) setTimeout(attempt, 400);
+    };
+    setTimeout(attempt, 800);
+  }
+
+  // ==========================================================================
+  // F01 原文可视化标注（派生层）
+  // ==========================================================================
+  // 既有机制只覆盖 annotations（生词/笔记/题型）—— 它们有 `<mark data-id>`。
+  // 真正的缺口是**长难句与写作素材**：它们存在 `syntax:<篇>` 和 `wsj_writing:materials` 里，
+  // 从来没有出现在正文上，所以「我在正文里标过的东西」和「我攒下来的句子」是两张皮。
+  //
+  // 派生层（不新增存储，纯渲染）：
+  //   · 从句库里取本篇的长难句、从素材库里取 articleId===本篇 的句子，回到正文里找**原句**；
+  //   · 用 `<mark class="hl hl-derived hl-syntax|hl-material">` 包起来，点击弹出内容卡片；
+  //   · ⚠ 不与既有标注**嵌套**：TreeWalker 直接拒绝 MARK 内的文本节点，
+  //     所以「已经标过生词的词」不会被再包一层 —— 这是这一层唯一必须守住的约束；
+  //   · ⚠ 幂等：每次重渲染先 unwrap 掉所有 `.hl-derived` 再重建；
+  //   · 开关：`wsj_reader:derivedAnns`（默认开），层太花时可关掉。
+  const DERIVED_PREF_KEY = 'wsj_reader:derivedAnns';
+  function derivedOn() {
+    let v = null;
+    try { v = localStorage.getItem(DERIVED_PREF_KEY); } catch (e) {}
+    return v === null || v === undefined ? true : v === '1' || v === true;
+  }
+  function setDerivedOn(on) {
+    try { localStorage.setItem(DERIVED_PREF_KEY, on ? '1' : '0'); } catch (e) {}
+    renderDerivedMarks();
+    showTopToast(on ? '已开启正文派生标注（长难句 / 素材）' : '已隐藏正文派生标注');
+  }
+  function insMaterials() { return insLoad('wsj_writing:materials', []) || []; }
+  function derivedEntries() {
+    const out = [];
+    (insLoad('syntax:' + articleId, []) || []).forEach((s, i) => {
+      const t = String((s && (s.text || s.html)) || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+      if (t.length >= 8) out.push({ kind: 'syntax', i: i, text: t });
+    });
+    insMaterials().forEach((m, i) => {
+      if (m && m.articleId && m.articleId !== articleId) return;   // 只标本篇的素材
+      const t = String((m && (m.sourceText || m.source)) || '').replace(/\s+/g, ' ').trim();
+      if (t.length >= 8) out.push({ kind: 'material', i: i, text: t });
+    });
+    return out;
+  }
+  function unwrapDerived() {
+    document.querySelectorAll('mark.hl-derived').forEach(m => {
+      if (!m.parentNode) return;
+      m.parentNode.replaceChild(document.createTextNode(m.textContent), m);
+    });
+    document.querySelectorAll('.col-body').forEach(el => { if (el.normalize) el.normalize(); });
+  }
+  function renderDerivedMarks() {
+    unwrapDerived();
+    if (!derivedOn()) return 0;
+    const entries = derivedEntries();
+    if (!entries.length) return 0;
+    // 长句先占位：短句/短语不会把长句切碎
+    entries.sort((a, b) => b.text.length - a.text.length);
+    const bodies = document.querySelectorAll('.col-body.en');
+    let n = 0;
+    bodies.forEach(body => {
+      entries.forEach(en => {
+        const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+          acceptNode: (nd) => {
+            if (!nd.parentNode) return NodeFilter.FILTER_REJECT;
+            let p = nd.parentNode;
+            while (p && p !== body) {
+              if (p.nodeType === 1) {
+                if (p.tagName === 'MARK') return NodeFilter.FILTER_REJECT;          // 不许嵌套
+                if (p.classList && p.classList.contains('pfunc-chip')) return NodeFilter.FILTER_REJECT;
+                if (p.tagName === 'SCRIPT' || p.tagName === 'STYLE') return NodeFilter.FILTER_REJECT;
+              }
+              p = p.parentNode;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+          }
+        });
+        const nodes = [];
+        let nd;
+        while ((nd = walker.nextNode())) nodes.push(nd);
+        for (let k = 0; k < nodes.length; k++) {
+          const node = nodes[k];
+          if (!node.parentNode) continue;
+          const val = node.nodeValue;
+          let from = 0;
+          let placed = false;
+          while (from <= val.length - en.text.length) {
+            const i = val.indexOf(en.text, from);
+            if (i < 0) break;
+            if (isWordBoundaryMatch(val, i, en.text)) {
+              const mark = document.createElement('mark');
+              mark.className = 'hl hl-derived hl-' + en.kind;
+              mark.dataset.derived = en.kind + ':' + en.i;
+              mark.title = (en.kind === 'syntax' ? '长难句' : '写作素材') + '：点开看内容';
+              mark.addEventListener('click', (e) => {
+                e.preventDefault();
+                openDerivedCard(mark.dataset.derived);
+              });
+              // ⚠ 必须**把原来那个文本节点搬进 mark**，不能给 mark 赋 textContent：
+              //   赋 textContent 会在原地生成一份副本，而 splitText 切出来的那段还在文档里
+              //   → 正文里同一句话出现两遍（实测被 verify_dictation 的「★ 长难句」用例抓到）。
+              const mid = node.splitText(i);        // node=[0,i)  mid=[i,end)
+              const tail = mid.splitText(en.text.length);   // mid=[i,i+len)  tail=余下
+              mark.appendChild(mid);                // 把 mid 从文档里摘进 mark（不复制文本）
+              tail.parentNode.insertBefore(mark, tail);
+              n++;
+              placed = true;
+              break;
+            }
+            from = i + 1;
+          }
+          if (placed) break;   // 一个句子在本篇通常只出现一次，标到就停
+        }
+      });
+    });
+    return n;
+  }
+  // 点派生标注 → 内容卡片（长难句给结构，素材给起因/经过/逻辑）
+  function openDerivedCard(key) {
+    const m = /^(syntax|material):(\d+)$/.exec(String(key || ''));
+    if (!m) return;
+    const kind = m[1], i = Number(m[2]);
+    const p = insPanel('derived-card', kind === 'syntax' ? '🧩 长难句' : '✍️ 写作素材');
+    insOpen(p);
+    const body = document.getElementById('derived-card-body');
+    if (!body) return;
+    if (kind === 'syntax') {
+      const rec = (insLoad('syntax:' + articleId, []) || [])[i];
+      if (!rec) { body.innerHTML = '<div class="ins-empty">这条长难句已经不在了。</div>'; return; }
+      const plain = String(rec.html ? rec.html.replace(/<[^>]+>/g, '') : rec.text || '');
+      body.innerHTML =
+        '<div class="dt-cn" style="border-left-color:#3182ce;font-size:14px">' + esc(plain) + '</div>' +
+        (rec.structure ? '<div class="ins-section">结构</div><div class="ins-dim">' + esc(String(rec.structure).replace(/\n/g, '　')) + '</div>' : '') +
+        (rec.note ? '<div class="ins-section">笔记</div><div>' + esc(rec.note) + '</div>' : '') +
+        '<div class="ins-dim">来源：' + esc(insTitleOf(articleId)) + (rec.paraIdx ? ' · 第 ' + esc(rec.paraIdx) + ' 段' : '') + '</div>' +
+        '<div class="ins-actions">' +
+        (rec.paraIdx ? '<button type="button" class="ins-btn ghost" data-dgoto="' + esc(rec.paraIdx) + '">看原文</button>' : '') +
+        '<button type="button" class="ins-btn" data-ddict="' + esc(plain.slice(0, 200)) + '">🖊 默写这句</button>' +
+        '</div>';
+    } else {
+      const rec = insMaterials()[i];
+      if (!rec) { body.innerHTML = '<div class="ins-empty">这条素材已经不在了。</div>'; return; }
+      body.innerHTML =
+        '<div class="ins-row-title"><span class="ins-tag type">' + esc(rec.topic || '未归类') + '</span>' +
+        (rec.usedCount ? '<span class="ins-tag ok">用过 ' + rec.usedCount + ' 次</span>' : '') + '</div>' +
+        '<div class="dt-cn" style="border-left-color:#38a169;font-size:14px">「' + esc(rec.sourceText || rec.source || '') + '」</div>' +
+        (rec.cause ? '<div><b>起因：</b>' + esc(rec.cause) + '</div>' : '') +
+        (rec.process ? '<div><b>经过：</b>' + esc(rec.process) + '</div>' : '') +
+        (rec.develop ? '<div><b>发展：</b>' + esc(rec.develop) + '</div>' : '') +
+        (rec.logic ? '<div><b>逻辑：</b>' + esc(rec.logic) + '</div>' : '') +
+        (rec.usage ? '<div><b>用法：</b>' + esc(rec.usage) + '</div>' : '') +
+        '<div class="ins-actions">' +
+        (rec.paraIdx ? '<button type="button" class="ins-btn ghost" data-dgoto="' + esc(rec.paraIdx) + '">看原文</button>' : '') +
+        '<button type="button" class="ins-btn ghost" data-dopen-mat="1">去写作工坊</button>' +
+        '</div>';
+    }
+    if (!body.dataset.wired) {
+      body.dataset.wired = '1';
+      body.addEventListener('click', (e) => {
+        const t = e.target;
+        const g = t.closest && t.closest('[data-dgoto]');
+        if (g) { jumpToPara(g.dataset.dgoto); return; }
+        const d = t.closest && t.closest('[data-ddict]');
+        if (d && typeof window.openDictation === 'function') { window.openDictation(d.dataset.ddict); return; }
+        if (t.closest && t.closest('[data-dopen-mat]')) { openWorkshopFromCard('materials'); return; }
+      });
+    }
+  }
+  // 卡片上的「去写作工坊」：走 window.__exam（面板在 exam-panel.js 里，reader 作用域拿不到）
+  function openWorkshopFromCard(tab) {
+    if (window.__exam && typeof window.__exam.openWritingWorkshop === 'function') {
+      window.__exam.openWritingWorkshop(tab);
+    } else {
+      showTopToast('写作工坊还没准备好，请从「考试」菜单进入');
+    }
+  }
+
+  // ==========================================================================
+  // F18 学习总览（10 篇一屏看完）
+  // ==========================================================================
+  // 数据全部来自既有键：`reading:<id>`（时长/位置）+ `wsj_reader:article:<id>`（段数）+
+  // `annotations:<id>` + `syntax:<id>` + `wsj_writing:materials` + `wsj_exam:history` + 4 个错题库
+  // + `wsj_dictation:stats`。**不新建任何聚合键**（那会成为第二份真相）。
+  function studyRowFor(id) {
+    const reg = insRegistry().filter(r => r.id === id)[0] || {};
+    const anns = insLoad('annotations:' + id, []) || [];
+    const rd = insLoad('reading:' + id, {}) || {};
+    const art = insLoad('wsj_reader:article:' + id, null) || {};
+    const paras = (art.enParas || []).map(p => Number(p && p.idx) || 0);
+    const paraMax = paras.length ? Math.max.apply(null, paras) : 0;
+    const lastPos = Number(rd.lastPosition || 0);
+    const title = reg.title || (id === articleId ? getShortTitle() : '') ||
+      String(id).replace(/_EN-CN_final\.html$/, '').replace(/_/g, ' ');
+    // 栏目 ID：本篇直接用 <body data-edition>；别的篇没有全局映射，靠考试记录里的 title 反查
+    const hist = insLoad('wsj_exam:history', []) || [];
+    let slug = (id === articleId && articleMeta.slug) ? articleMeta.slug : '';
+    if (!slug && title) {
+      const hit = hist.filter(h => h && h.slug && h.title === title)[0];
+      if (hit) slug = hit.slug;
+    }
+    let correct = 0, total = 0;
+    hist.forEach(h => {
+      if (!slug || !h || h.slug !== slug) return;
+      if (h.mode && h.mode !== 'exam' && h.mode !== 'reading') return;   // 阅读理解的成绩才算这一项
+      correct += Number(h.correct || 0);
+      total += Number(h.total || 0);
+    });
+    const wrongs = WRONG_STORES.reduce((n, st) =>
+      n + (insLoad(st.key, []) || []).filter(w => w && slug && w.slug === slug).length, 0);
+    const dictKeys = Object.keys(insLoad(DICT_STATS_KEY, {}) || {}).filter(k => k.indexOf(id + '#') === 0);
+    return {
+      id: id, title: title, slug: slug,
+      seconds: Number(rd.totalSeconds || 0),
+      progress: paraMax ? Math.min(100, Math.round(lastPos / paraMax * 100)) : 0,
+      started: !!rd.lastPosition,
+      vocab: anns.filter(a => a.bucket === 'vocab').length,
+      note: anns.filter(a => a.bucket === 'note').length,
+      misread: anns.filter(a => a.bucket === 'misread').length,
+      syntax: (insLoad('syntax:' + id, []) || []).length,
+      material: insMaterials().filter(m => m && m.articleId === id).length,
+      rate: total ? Math.round(correct / total * 100) : null,
+      trials: total, wrongs: wrongs, dict: dictKeys.length
+    };
+  }
+  function studyRows() {
+    const ids = insRegistry().map(r => r.id).filter(Boolean);
+    if (articleId && ids.indexOf(articleId) < 0) ids.push(articleId);
+    const rows = ids.map(studyRowFor);
+    rows.sort((a, b) => b.seconds - a.seconds || a.title.localeCompare(b.title));
+    return rows;
+  }
+  function fmtMinutes(sec) {
+    const m = Math.round((sec || 0) / 60);
+    return m >= 60 ? (m / 60).toFixed(1) + ' 小时' : m + ' 分钟';
+  }
+  function openStudyOverview() {
+    const p = insPanel('study-panel', '📚 学习总览', '<button type="button" class="ins-btn ghost" data-srefresh="1">刷新</button>');
+    insOpen(p);
+    renderStudyOverview();
+    const body = document.getElementById('study-panel-body');
+    if (body && !body.dataset.wired) {
+      body.dataset.wired = '1';
+      body.addEventListener('click', (e) => {
+        const t = e.target;
+        if (t.closest && t.closest('[data-srefresh]')) { renderStudyOverview(); return; }
+        const j = t.closest && t.closest('[data-sjump]');
+        if (j) { jumpToRef(j.dataset.sjump, j.dataset.spara || ''); return; }
+      });
+    }
+  }
+  function renderStudyOverview() {
+    const body = document.getElementById('study-panel-body');
+    if (!body) return;
+    const rows = studyRows();
+    const sum = rows.reduce((a, r) => {
+      a.seconds += r.seconds; a.vocab += r.vocab; a.syntax += r.syntax; a.material += r.material;
+      a.wrongs += r.wrongs; a.dict += r.dict; a.misread += r.misread;
+      if (r.started) a.started++;
+      if (r.trials) { a.correct += 0; }
+      return a;
+    }, { seconds: 0, vocab: 0, syntax: 0, material: 0, wrongs: 0, dict: 0, misread: 0, started: 0, correct: 0 });
+    const cross = allVocabWords().filter(w => w.n >= 2).length;
+    let correct = 0, total = 0;
+    (insLoad('wsj_exam:history', []) || []).forEach(h => {
+      if (!h || (h.mode && h.mode !== 'exam' && h.mode !== 'reading')) return;
+      correct += Number(h.correct || 0); total += Number(h.total || 0);
+    });
+    const dueWords = (typeof dueReviewCount === 'function') ? dueReviewCount() : 0;
+    const dueWrongs = (typeof dueWrongCount === 'function') ? dueWrongCount() : 0;
+    const readPct = rows.length ? Math.round(rows.reduce((n, r) => n + r.progress, 0) / rows.length) : 0;
+    let html =
+      '<div class="ins-kpi">' +
+      '<div class="ins-kpi-item"><b>' + sum.started + '/' + rows.length + '</b><span>已开始阅读</span></div>' +
+      '<div class="ins-kpi-item"><b>' + fmtMinutes(sum.seconds) + '</b><span>累计阅读</span></div>' +
+      '<div class="ins-kpi-item"><b>' + sum.vocab + '</b><span>生词</span></div>' +
+      '<div class="ins-kpi-item"><b>' + cross + '</b><span>≥2 篇复现</span></div>' +
+      '<div class="ins-kpi-item"><b>' + sum.syntax + '</b><span>长难句</span></div>' +
+      '<div class="ins-kpi-item"><b>' + sum.material + '</b><span>素材</span></div>' +
+      '</div>' +
+      '<div class="ins-kpi">' +
+      '<div class="ins-kpi-item"><b>' + (total ? Math.round(correct / total * 100) + '%' : '—') + '</b><span>阅读题正确率</span></div>' +
+      '<div class="ins-kpi-item"><b>' + sum.wrongs + '</b><span>错题</span></div>' +
+      '<div class="ins-kpi-item"><b>' + sum.misread + '</b><span>理解偏差</span></div>' +
+      '<div class="ins-kpi-item"><b>' + sum.dict + '</b><span>默写句数</span></div>' +
+      '<div class="ins-kpi-item hot"><b>' + dueWords + '</b><span>今日待复习生词</span></div>' +
+      '<div class="ins-kpi-item hot"><b>' + dueWrongs + '</b><span>今日待复习错题</span></div>' +
+      '</div>' +
+      '<div class="so-bar"><span>整体阅读进度</span><span class="so-track"><span class="so-fill" style="width:' + readPct + '%"></span></span><b>' + readPct + '%</b></div>';
+    if (!rows.length) {
+      html += '<div class="ins-empty">还没有任何文章记录。<br><span class="ins-dim">打开过一篇再回来，这里就会汇总。</span></div>';
+    } else {
+      html += '<table class="ins-table so-table"><thead><tr>' +
+        '<th>文章</th><th>进度</th><th>生词</th><th>长难句</th><th>素材</th><th>正确率</th><th>错题</th><th>默写</th>' +
+        '</tr></thead><tbody>' +
+        rows.map(r =>
+          '<tr' + (r.id === articleId ? ' class="cur"' : '') + '>' +
+          '<td class="so-title">' +
+          (((r.id === articleId) || !r.started) ? esc(r.title) :
+            '<button type="button" class="so-link" data-sjump="' + esc(r.id) + '" title="打开这篇">' + esc(r.title) + '</button>') +
+          (r.id === articleId ? ' <span class="ins-tag type">本篇</span>' : '') + '</td>' +
+          '<td><span class="so-track"><span class="so-fill" style="width:' + r.progress + '%"></span></span> ' + r.progress + '%</td>' +
+          '<td>' + (r.vocab || '—') + '</td><td>' + (r.syntax || '—') + '</td><td>' + (r.material || '—') + '</td>' +
+          '<td>' + (r.rate === null ? '—' : r.rate + '%') + '</td><td>' + (r.wrongs || '—') + '</td><td>' + (r.dict || '—') + '</td>' +
+          '</tr>').join('') +
+        '</tbody></table>' +
+        '<div class="ins-dim">正确率只统计阅读理解（完形 / 新题型 / 翻译的题型不同，混在一起没有意义）；' +
+        '带下划线的标题可以点开那篇文章。所有数字都来自本机已有记录，不联网。' +
+        (rows.filter(r => !r.slug).length ? '<br>注：有 ' + rows.filter(r => !r.slug).length +
+          ' 篇暂时认不出栏目 ID（栏目 ID 只写在文章 HTML 里），这几篇的正确率与错题数会显示为 —。' : '') +
+        '</div>';
+    }
+    body.innerHTML = html;
+  }
+
+  window.openWrongBook = openWrongBook;
+  window.openRadar = openRadar;
+  window.openParaFuncPanel = openParaFuncPanel;
+  window.openVocabNet = openVocabNet;
+  window.renderParaFuncs = renderParaFuncs;
+  window.setParaFunc = setParaFunc;
+  window.dueWrongCount = dueWrongCount;
+  window.jumpToRef = jumpToRef;
+  // F01 派生标注层 / F18 学习总览
+  window.renderDerivedMarks = renderDerivedMarks;
+  window.derivedOn = derivedOn;
+  window.setDerivedOn = setDerivedOn;
+  window.openDerivedCard = openDerivedCard;
+  window.openStudyOverview = openStudyOverview;
+  window.studyRows = studyRows;
+
+  // ===== F11 中译英默写（看着中文译文，默写英文原句，逐词比对）=====
+  //
+  // 题库从**文章本身**现取，不新建索引：
+  //   · 主来源 = 本篇 `.col-body.en p[data-para-idx]` ↔ `.col-body.cn p[data-para-idx]` 逐段配对，
+  //     段内按句切分；英中句数一致就逐句配对，不一致则整段作为一格（标「整段」）；
+  //   · 加成来源 = 本篇已标注的长难句（`syntax:<articleId>`），标 ★ 并排在前面；
+  //   · 没有中文对照的句子（跨篇素材等）**不进题库** —— 默写必须有中文提示，硬凑会变成抄写。
+  //
+  // 存储：
+  //   `wsj_dictation:stats`  每题的练习次数与最近正确率（用于「未默写 / 错过」筛选）
+  //   `wsj_dictation:wrongs` 拼错的词侧车（spec 的「错词本」）—— 可一键并进生词本
+  // 两个键都要在 09-reading.js 的备份白名单里。
+  //
+  // ⚠ 本模块必须排在 10-toolbar.js 之前（后者负责收尾 IIFE）。
+
+  const DICT_STATS_KEY = 'wsj_dictation:stats';
+  const DICT_WRONG_KEY = 'wsj_dictation:wrongs';
+
+  // ---------- 句子切分 ----------
+  // 英文：句末标点 + 空白/结尾。⚠ 必须用 lookahead —— 用 /[^.!?]+[.!?]+(\s+|$)/ 取第一个 match
+  // 遇到 "the U.S. Senate" 这类缩写会从 "S. " 开始匹配（完形生成器踩过同一个坑）。
+  function dictSplitEn(text) {
+    const out = [];
+    const re = /[.!?]["')\]]?(?=\s|$)/g;
+    let last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      out.push(text.slice(last, m.index + m[0].length));
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) out.push(text.slice(last));
+    return out.map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  }
+  // 中文：句末标点后切。不用 lookbehind，避免老浏览器不支持。
+  function dictSplitCn(text) {
+    const out = [];
+    let cur = '';
+    String(text || '').split('').forEach(ch => {
+      cur += ch;
+      if ('。！？；'.indexOf(ch) >= 0) { if (cur.replace(/\s+/g, '').trim()) out.push(cur.trim()); cur = ''; }
+    });
+    if (cur.replace(/\s+/g, '').trim()) out.push(cur.trim());
+    return out;
+  }
+  function dictWords(s) {
+    return (String(s || '').match(/[A-Za-z0-9][A-Za-z0-9'’\-]*/g) || [])
+      .map(w => w.replace(/^['’\-]+|['’\-]+$/g, ''))
+      .filter(Boolean);
+  }
+  function dictKey(w) { return String(w).toLowerCase().replace(/[’']/g, ''); }
+
+  // ---------- 题库 ----------
+  function dictParaMap(cls) {
+    const map = {};
+    document.querySelectorAll('.col-body.' + cls + ' p[data-para-idx]').forEach(p => {
+      map[String(p.dataset.paraIdx)] = String(p.textContent || '').replace(/\s+/g, ' ').trim();
+    });
+    return map;
+  }
+  function dictItems() {
+    const en = dictParaMap('en'), cn = dictParaMap('cn');
+    const idxs = Object.keys(en).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+    // 长难句来源（标 ★）
+    const star = {};
+    let syn = [];
+    try { syn = JSON.parse(localStorage.getItem('syntax:' + articleId)) || []; } catch (e) { syn = []; }
+    syn.forEach(s => {
+      const t = String((s && (s.text || s.html || '')) || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+      if (t) star[dictKey(t.slice(0, 60))] = true;
+    });
+    const items = [], skipped = [];
+    idxs.forEach(idx => {
+      const enText = en[idx], cnText = cn[idx] || '';
+      if (!cnText) { skipped.push(idx); return; }
+      const enS = dictSplitEn(enText), cnS = dictSplitCn(cnText);
+      if (enS.length > 1 && enS.length === cnS.length) {
+        enS.forEach((s, k) => {
+          const n = dictWords(s).length;
+          if (n < 6 || n > 45) { skipped.push(idx); return; }
+          items.push({
+            id: 'p' + idx + 's' + (k + 1), paraIdx: idx, en: s, cn: cnS[k],
+            star: !!star[dictKey(s.slice(0, 60))]
+          });
+        });
+      } else {
+        // 英中句数不一致：整段作为一格（太长就不出题，避免默写 200 词）
+        const n = dictWords(enText).length;
+        if (n < 6 || n > 45) { skipped.push(idx); return; }
+        items.push({
+          id: 'p' + idx + 'all', paraIdx: idx, en: enText, cn: cnText, whole: true,
+          star: !!star[dictKey(enText.slice(0, 60))]
+        });
+      }
+    });
+    items.sort((a, b) => (b.star ? 1 : 0) - (a.star ? 1 : 0) || parseInt(a.paraIdx, 10) - parseInt(b.paraIdx, 10));
+    // skipped 按「段」去重：面板提示说的是「有几段没出题」，不是有几个失败分支
+    const skippedParas = [];
+    skipped.forEach(s => { if (skippedParas.indexOf(s) < 0) skippedParas.push(s); });
+    return { items: items, skipped: skippedParas };
+  }
+
+  // ---------- 逐词比对（LCS）----------
+  // 不是简单的「公共子序列长度」——还要能告诉用户哪个词拼错了、哪个词漏了、多了什么，
+  // 所以先求出对齐对，再把两侧的「空隙」配成 替换(missing) / 多写(extra)。
+  //
+  // 分词器是可换的：默写用「英文词」，笔记历史对比（F15）用「英文词 + 单个汉字 + 其它单字符」。
+  // 两者共用同一套 LCS 与状态判定，避免出现两份会各自跑偏的 diff。
+  function dictTokenizeEn(s) { return dictWords(s); }
+  function dictTokenizeAny(s) {
+    return (String(s || '').match(/[A-Za-z0-9'’\-]+|[\u4e00-\u9fff]|[^\s]/g) || []);
+  }
+  function diffTokens(original, input, tokenize) {
+    const A = tokenize(original), B = tokenize(input);
+    const n = A.length, m = B.length;
+    const dp = [];
+    for (let i = 0; i <= n; i++) dp.push(new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        dp[i][j] = dictKey(A[i]) === dictKey(B[j])
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    // 回溯出匹配对
+    const pairs = [];
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (dictKey(A[i]) === dictKey(B[j])) { pairs.push([i, j]); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+      else j++;
+    }
+    const aStatus = new Array(n).fill('missing');
+    const bStatus = new Array(m).fill('extra');
+    let correct = 0, wrong = 0;
+    pairs.forEach(p => { aStatus[p[0]] = 'correct'; bStatus[p[1]] = 'correct'; correct++; });
+    // 把两侧的空隙配对成「替换」：原词记 wrong，用户词也记 wrong
+    let ai = 0, bi = 0, pi = 0;
+    while (pi <= pairs.length) {
+      const ae = pi < pairs.length ? pairs[pi][0] : n;
+      const be = pi < pairs.length ? pairs[pi][1] : m;
+      const an = ae - ai, bn = be - bi;
+      const k = Math.min(an, bn);
+      for (let q = 0; q < k; q++) { aStatus[ai + q] = 'wrong'; bStatus[bi + q] = 'wrong'; wrong++; }
+      ai = ae; bi = be;
+      if (pi < pairs.length) { ai = pairs[pi][0] + 1; bi = pairs[pi][1] + 1; }
+      pi++;
+    }
+    const miss = aStatus.filter(s => s === 'missing').length;
+    const extra = bStatus.filter(s => s === 'extra').length;
+    const denom = Math.max(n, m) || 1;
+    return {
+      tokens: A.map((w, k) => ({ word: w, status: aStatus[k] })),
+      userTokens: B.map((w, k) => ({ word: w, status: bStatus[k] })),
+      correct: correct, wrong: wrong, missing: miss, extra: extra,
+      lenA: n, lenB: m,
+      accuracy: Math.round(correct / denom * 100),
+      wrongWords: A.filter((w, k) => aStatus[k] !== 'correct')
+    };
+  }
+  function dictDiff(original, input) { return diffTokens(original, input, dictTokenizeEn); }
+  // 通用版（笔记历史 Delta 的「变了什么」视图用它）—— 中文按单字成 token，否则整段中文会被当成一个词
+  function diffWords(original, input) { return diffTokens(original, input, dictTokenizeAny); }
+
+  // ---------- 错词本 ----------
+  function dictWrongs() { return insLoad(DICT_WRONG_KEY, []) || []; }
+  function dictAddWrongs(words, paraIdx) {
+    if (!words || !words.length) return;
+    const arr = dictWrongs();
+    words.forEach(w => {
+      const k = dictKey(w);
+      if (!k) return;
+      const rec = arr.filter(x => dictKey(x.word) === k)[0];
+      if (rec) {
+        rec.count = (rec.count || 1) + 1;
+        rec.lastAt = new Date().toISOString();
+        if (paraIdx && !rec.paraIdx) rec.paraIdx = paraIdx;
+      } else {
+        arr.push({ word: w, count: 1, articleId: articleId, paraIdx: paraIdx || '', at: new Date().toISOString() });
+      }
+    });
+    arr.sort((a, b) => (b.count || 0) - (a.count || 0));
+    insSave(DICT_WRONG_KEY, arr);
+  }
+  // 错词并进生词本：这是真的「复用」——生词网络 / 词频着色 / 今日复习全都跟着生效
+  function dictWordToVocab(word, paraIdx, context) {
+    const w = String(word || '').trim();
+    if (!w) return;
+    const exists = annotations.some(a => a.bucket === 'vocab' && dictKey(a.text) === dictKey(w));
+    if (exists) { showTopToast('「' + w + '」已在生词本里'); return; }
+    annotations.push({
+      id: genId(), type: 'vocab', bucket: 'vocab', text: w,
+      note: '默写错词', context: context || '', paraIdx: paraIdx || '',
+      createdAt: new Date().toISOString(), from: 'dictation'
+    });
+    saveAnnotations();
+    showTopToast('「' + w + '」已加入生词本');
+  }
+
+  // ---------- 面板 ----------
+  let dictState = { idx: 0, filter: 'all', items: [], skipped: [], input: '', result: null, revealed: false };
+  var _dictBound = false;
+
+  function dictStats() { return insLoad(DICT_STATS_KEY, {}) || {}; }
+  function dictStatOf(it) { return dictStats()[articleId + '#' + it.id] || null; }
+  function openDictation(focusText) {
+    const p = insPanel('dictation-panel', '🖊 中译英默写');
+    insOpen(p);
+    const built = dictItems();
+    dictState.items = built.items;
+    dictState.skipped = built.skipped;
+    if (focusText) {
+      const k = dictKey(String(focusText).slice(0, 60));
+      const hit = dictState.items.findIndex(it => dictKey(it.en.slice(0, 60)) === k);
+      if (hit >= 0) dictState.idx = hit;
+    }
+    if (dictState.idx >= dictState.items.length) dictState.idx = 0;
+    dictState.input = ''; dictState.result = null; dictState.revealed = false;
+    renderDictation();
+    const body = document.getElementById('dictation-panel-body');
+    if (body && !_dictBound) {
+      _dictBound = true;
+      body.addEventListener('click', e => {
+        const t = e.target;
+        const pick = t.closest && t.closest('[data-dfilter]');
+        if (pick) { dictState.filter = pick.dataset.dfilter; dictState.idx = 0; nextDictItem(); return; }
+        if (t.closest && t.closest('#dict-submit')) { submitDictation(); return; }
+        if (t.closest && t.closest('#dict-skip')) { nextDictItem(); return; }
+        if (t.closest && t.closest('#dict-reveal')) {
+          dictState.revealed = true; dictState.result = dictDiff(currentItem().en, dictState.input);
+          renderDictation(); return;
+        }
+        if (t.closest && t.closest('#dict-prev')) { moveDict(-1); return; }
+        if (t.closest && t.closest('#dict-next')) { moveDict(1); return; }
+        const v = t.closest && t.closest('[data-dvocab]');
+        if (v) { dictWordToVocab(v.dataset.dvocab, v.dataset.dpara, currentItem().en); return; }
+        const g = t.closest && t.closest('[data-dgoto]');
+        if (g) { jumpToPara(g.dataset.dgoto); return; }
+        const all = t.closest && t.closest('#dict-allvocab');
+        if (all) {
+          const r = dictState.result;
+          if (!r) return;
+          const uniq = Array.from(new Set(r.wrongWords.map(dictKey)));
+          r.wrongWords.forEach(w => dictWordToVocab(w, currentItem().paraIdx, currentItem().en));
+          showTopToast('已把 ' + uniq.length + ' 个错词加入生词本');
+          return;
+        }
+      });
+      body.addEventListener('input', e => {
+        if (e.target && e.target.id === 'dict-input') dictState.input = e.target.value;
+      });
+      body.addEventListener('keydown', e => {
+        if (e.target && e.target.id === 'dict-input' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault(); submitDictation();
+        }
+      });
+    }
+  }
+  function currentItem() { return dictState.items[dictState.idx] || null; }
+  function dictFiltered() {
+    const st = dictStats();
+    return dictState.items.filter(it => {
+      const s = st[articleId + '#' + it.id];
+      if (dictState.filter === 'todo') return !s;
+      if (dictState.filter === 'fail') return s && s.accuracy < 80;
+      if (dictState.filter === 'star') return !!it.star;
+      return true;
+    });
+  }
+  function moveDict(d) {
+    const list = dictFiltered();
+    const cur = currentItem();
+    const pos = list.indexOf(cur);
+    const next = list[(pos < 0 ? 0 : pos + d + list.length) % list.length];
+    if (!next) return;
+    dictState.idx = dictState.items.indexOf(next);
+    dictState.input = ''; dictState.result = null; dictState.revealed = false;
+    renderDictation();
+  }
+  function nextDictItem() {
+    const list = dictFiltered();
+    if (!list.length) { renderDictation(); return; }
+    const cur = currentItem();
+    const pos = list.indexOf(cur);
+    const next = list[(pos + 1) % list.length];
+    if (next) dictState.idx = dictState.items.indexOf(next);
+    dictState.input = ''; dictState.result = null; dictState.revealed = false;
+    renderDictation();
+  }
+  function submitDictation() {
+    const it = currentItem();
+    if (!it) return;
+    const input = (dictState.input || '').trim();
+    if (!input) { showTopToast('先写下你的译文再提交'); return; }
+    const r = dictDiff(it.en, input);
+    dictState.result = r;
+    const st = dictStats();
+    const k = articleId + '#' + it.id;
+    const rec = st[k] || { n: 0, best: 0 };
+    rec.n = (rec.n || 0) + 1;
+    rec.lastAccuracy = r.accuracy;
+    rec.best = Math.max(rec.best || 0, r.accuracy);
+    rec.lastAt = new Date().toISOString();
+    st[k] = rec;
+    insSave(DICT_STATS_KEY, st);
+    if (r.wrongWords.length) dictAddWrongs(r.wrongWords, it.paraIdx);
+    renderDictation();
+    showTopToast(r.accuracy >= 95 ? '几乎完全正确（' + r.accuracy + '%）'
+      : r.accuracy >= 80 ? '不错（' + r.accuracy + '%），还有 ' + r.wrongWords.length + ' 处要改'
+        : '正确率 ' + r.accuracy + '%，错词已记入错词本');
+  }
+  function dictTokenHTML(tokens, side) {
+    if (!tokens.length) return '<span class="ins-dim">（空）</span>';
+    return tokens.map(t => {
+      const cls = 'dt-tok dt-' + t.status + (side === 'user' ? ' dt-u' : '');
+      const title = t.status === 'correct' ? '' : t.status === 'missing' ? '遗漏' : t.status === 'extra' ? '多写' : '拼写/用词不符';
+      return '<span class="' + cls + '" title="' + esc(title) + '">' + esc(t.word) + '</span>';
+    }).join(' ');
+  }
+  function renderDictation() {
+    const body = document.getElementById('dictation-panel-body');
+    if (!body) return;
+    if (!dictState.items.length) {
+      body.innerHTML = '<div class="ins-empty">这篇没有可默写的句子。<br>' +
+        '<span class="ins-dim">默写需要「英文段落 + 对应中文译文」成对出现，并且句子长度在 6-45 词之间。' +
+        '如果这篇的中文是空的，或句式无法逐句对齐，就不出题 —— 硬凑会变成抄写。</span></div>';
+      return;
+    }
+    const st = dictStats();
+    const list = dictFiltered();
+    const done = dictState.items.filter(it => st[articleId + '#' + it.id]).length;
+    const it = currentItem();
+    const rec = it ? st[articleId + '#' + it.id] : null;
+    const r = dictState.result;
+    const chips = [
+      ['all', '全部 ' + dictState.items.length],
+      ['todo', '未默写 ' + (dictState.items.length - done)],
+      ['fail', '正确率 <80% ' + dictState.items.filter(x => st[articleId + '#' + x.id] && st[articleId + '#' + x.id].accuracy < 80).length],
+      ['star', '★ 长难句 ' + dictState.items.filter(x => x.star).length]
+    ];
+    let html = '<div class="ins-filters">' + chips.map(c =>
+      '<button type="button" class="ins-chip' + (dictState.filter === c[0] ? ' active' : '') +
+      '" data-dfilter="' + c[0] + '">' + esc(c[1]) + '</button>').join('') +
+      '<span class="ins-dim" style="margin-left:auto">已练 ' + done + ' / ' + dictState.items.length + ' 句</span></div>';
+
+    if (!it) {
+      html += '<div class="ins-empty">当前筛选下没有句子。</div>';
+      body.innerHTML = html;
+      return;
+    }
+    const posInList = list.indexOf(it);
+    html += '<div class="dt-head">' +
+      '<span class="ins-tag' + (it.star ? ' ok' : '') + '">' + (it.star ? '★ 长难句' : '正文') + '</span>' +
+      '<span class="ins-tag type">第 ' + esc(it.paraIdx) + ' 段' + (it.whole ? '（整段）' : '') + '</span>' +
+      (rec ? '<span class="ins-tag">练过 ' + rec.n + ' 次 · 最高 ' + rec.best + '%</span>' : '<span class="ins-tag">未练过</span>') +
+      '<button type="button" class="ins-btn ghost" data-dgoto="' + esc(it.paraIdx) + '">看原文</button>' +
+      '<span class="ins-dim" style="margin-left:auto">' + (posInList + 1) + ' / ' + list.length + '</span>' +
+      '</div>';
+    html += '<div class="dt-cn">' + esc(it.cn) + '</div>';
+    html += '<div class="dt-hint ins-dim">看中文写出对应的英文句子（Ctrl+Enter 提交）。' +
+      '只比词，不比标点与大小写。</div>';
+    html += '<textarea id="dict-input" class="dt-input" rows="' + (it.whole ? 6 : 3) + '" ' +
+      'placeholder="在这里默写英文…">' + esc(dictState.input) + '</textarea>';
+    html += '<div class="ws-import-actions">' +
+      '<button type="button" class="primary" id="dict-submit">提交比对</button>' +
+      '<button type="button" class="ins-btn ghost" id="dict-reveal">看答案</button>' +
+      '<button type="button" class="ins-btn ghost" id="dict-skip">跳过</button>' +
+      '<button type="button" class="ins-btn ghost" id="dict-prev">上一句</button>' +
+      '<button type="button" class="ins-btn ghost" id="dict-next">下一句</button>' +
+      '</div>';
+
+    if (r) {
+      const pct = r.accuracy;
+      const tag = pct >= 95 ? 'ok' : pct >= 80 ? '' : 'cause';
+      html += '<div class="dt-verdict"><span class="ins-tag ' + tag + '">' + pct + '% 正确</span>' +
+        '<span class="ins-dim">对 ' + r.correct + ' · 错 ' + r.wrong + ' · 漏 ' + r.missing + ' · 多 ' + r.extra +
+        '（原文 ' + r.lenA + ' 词 / 你写 ' + r.lenB + ' 词）</span></div>';
+      html += '<div class="dt-line"><span class="dt-label">你写的</span><div class="dt-tokens">' +
+        dictTokenHTML(r.userTokens, 'user') + '</div></div>';
+      html += '<div class="dt-line"><span class="dt-label">原文</span><div class="dt-tokens">' +
+        dictTokenHTML(r.tokens, 'orig') + '</div></div>';
+      if (r.wrongWords.length) {
+        const uniq = [];
+        r.wrongWords.forEach(w => { if (!uniq.some(x => dictKey(x) === dictKey(w))) uniq.push(w); });
+        html += '<div class="dt-wrong"><b>错词 ' + uniq.length + ' 个（已记入错词本）</b>' +
+          '<div class="dt-wrong-list">' + uniq.map(w =>
+            '<button type="button" class="ins-chip" data-dvocab="' + esc(w) + '" data-dpara="' + esc(it.paraIdx) +
+            '" title="加入生词本">' + esc(w) + ' ＋</button>').join('') + '</div>' +
+          '<button type="button" class="ins-btn ghost" id="dict-allvocab">全部加入生词本</button></div>';
+      } else {
+        html += '<div class="dt-verdict"><span class="ins-tag ok">逐词全对</span></div>';
+      }
+    }
+    const wrongs = dictWrongs();
+    if (wrongs.length) {
+      html += '<details class="ws-samples"><summary>错词本（本机累计 ' + wrongs.length + ' 个词）</summary>' +
+        '<div class="dt-wrong-list">' + wrongs.slice(0, 40).map(w =>
+          '<span class="ins-chip legend">' + esc(w.word) + ' ×' + (w.count || 1) + '</span>').join('') +
+        '</div><div class="ins-dim">点上面「＋」可以把错词并进生词本，之后生词网络、词频着色、今日复习都会带上它。</div></details>';
+    }
+    if (dictState.skipped.length) {
+      html += '<div class="ins-dim">另有 ' + dictState.skipped.length + ' 处未出题（英中无法逐句对齐或长度超出 6-45 词）。</div>';
+    }
+    body.innerHTML = html;
+    const ta = document.getElementById('dict-input');
+    if (ta && !r) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  }
+
+  window.openDictation = openDictation;
+  window.dictDiff = dictDiff;
+  window.diffWords = diffWords;   // 通用词级 diff（笔记历史 Delta 的对比视图用它）
+  window.dictItems = dictItems;
+
+﻿  // ===== 考试模式：5 个相互独立的模块 =====
+  // 设计约定：
+  //   * 「有哪些模块」的**唯一事实来源**是 <body data-exam-types>（由 scripts/sync_article_meta.py 维护）；
+  //   * 本表只描述「每一类长什么样、怎么进」。新增一类 = 改 EXAM_TYPES + 在这里补一行，菜单自动出现；
+  //   * 5 个模块彼此独立：各自一个页面或面板，各自存自己的数据，互不依赖。
+  const EXAM_MODULES = [
+    { key: 'reading', icon: '📝', label: '阅读理解', en: 'Reading Comprehension', prefix: 'exam_',
+      desc: '五道选择题，计时作答，交卷才揭晓对错' },
+    { key: 'cloze', icon: '🧩', label: '完形填空', en: 'Use of English', prefix: 'cloze_',
+      desc: '20 空，选项自动联动生词本' },
+    { key: 'newtype', icon: '🔗', label: '新题型', en: 'New Question Types', prefix: 'newtype_',
+      desc: '七选五 / 排序 / 小标题' },
+    { key: 'translation', icon: '✍', label: '翻译练习', en: 'Translation', prefix: 'translation_',
+      desc: '5 句长难句英译中 + 分点自评' },
+    { key: 'writing', icon: '✍️', label: '写作', en: 'Writing', panel: 'openWritingWorkshop',
+      desc: '写作工坊：素材 / 建议文 / 长难句 / 词根' }
+  ];
+  function examModulesAvailable() {
+    const on = articleMeta.examTypes || [];
+    return EXAM_MODULES.filter(m => on.indexOf(m.key) >= 0);
+  }
+  function examModuleOpen(m) {
+    if (!m) return;
+    if (m.panel) { loadExamPanel().then(E => { if (E && E[m.panel]) E[m.panel](); }).catch(() => {}); return; }
+    if (!articleMeta.slug) { showTopToast('本篇没有登记栏目 ID，无法打开考试模块'); return; }
+    location.href = m.prefix + articleMeta.slug + '.html';
+  }
+  function examModuleItems() {
+    const mods = examModulesAvailable();
+    if (!mods.length) return '<div class="menu-note">本篇未收录考试模块</div>';
+    return mods.map(m => menuItemHTML('exam-mod-' + m.key, m.icon, m.label, m.desc)).join('');
+  }
+  // 考试模式总览：把 5 个模块并排摆出来，各自独立进入（考研试卷的封套样式）
+  function openExamHub() {
+    closeAllMenus();
+    const old = document.getElementById('exam-hub');
+    if (old) old.remove();
+    const on = articleMeta.examTypes || [];
+    const src = document.querySelector('.title-block h1:not(.cn)');
+    const cards = EXAM_MODULES.map(m => {
+      const enabled = on.indexOf(m.key) >= 0;
+      return '<button type="button" class="eh-card' + (enabled ? '' : ' is-off') + '"' +
+        (enabled ? ' data-mod="' + m.key + '"' : ' disabled') + '>' +
+        '<span class="eh-icon">' + m.icon + '</span>' +
+        '<span class="eh-name">' + esc(m.label) + '</span>' +
+        '<span class="eh-en">' + esc(m.en) + '</span>' +
+        '<span class="eh-desc">' + esc(m.desc) + '</span>' +
+        '<span class="eh-state">' + (enabled ? '进入 →' : '本篇未收录') + '</span></button>';
+    }).join('');
+    const ov = document.createElement('div');
+    ov.className = 'exam-hub';
+    ov.id = 'exam-hub';
+    ov.innerHTML =
+      '<div class="eh-box">' +
+      '<header class="eh-head">' +
+      '<div class="eh-secret">绝密★启用前</div>' +
+      '<h3>考试模式</h3>' +
+      '<div class="eh-sub">2026 年全国硕士研究生招生考试　英语（一）</div>' +
+      (src ? '<div class="eh-src">' + esc(src.textContent.trim()) + '</div>' : '') +
+      '</header>' +
+      '<div class="eh-grid">' + cards + '</div>' +
+      '<footer class="eh-foot">' +
+      '<span>五个模块彼此独立：各有各的界面与记录，互不影响，可单独进入</span>' +
+      '<button type="button" class="eh-close">关闭</button></footer>' +
+      '</div>';
+    document.body.appendChild(ov);
+    ov.querySelector('.eh-close').addEventListener('click', () => ov.remove());
+    ov.addEventListener('click', (e) => { if (e.target === ov) ov.remove(); });
+    ov.querySelectorAll('[data-mod]').forEach(b => {
+      b.addEventListener('click', () => {
+        const m = EXAM_MODULES.filter(x => x.key === b.dataset.mod)[0];
+        ov.remove();
+        examModuleOpen(m);
+      });
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.getElementById('exam-hub')) document.getElementById('exam-hub').remove();
+  });
+  window.openExamHub = openExamHub;
+
+  // ===== Injected menu extras (UX-2 / UX-4 / UX-7) — article HTML stays untouched =====
+  // 考试相关入口的显隐与寻址一律走 articleMeta（读 <body data-*>），
+  // 不再维护「文件名 → slug」映射表；新增文章只要 HTML 属性写对即可。
   // ---- 工具栏菜单：视图 / 考试 / 数据 / 工具 四个分组下拉 ----
   // 旧版是 2 个下拉（左 8 项 / 右 19 项，考试模式沉底且菜单超出屏幕），整体在运行时重建。
   function menuTriggerHTML(side, icon, label, title) {
@@ -2936,6 +5579,21 @@
       (title ? ' title="' + esc(title) + '"' : '') + '><span>' + icon + '</span><span>' + esc(label) + '</span>' +
       (hint ? '<span class="menu-kbd">' + esc(hint) + '</span>' : '') + (extra || '') + '</button>';
   }
+  // 菜单里的「保存位置」标签：显示用户选过的文件夹名，没选过就说清楚默认会去哪儿
+  function saveDirMenuLabel() {
+    const saved = parseLS('wsj_reader:backupDirName', '');
+    if (saved) return '保存到：' + saved + (backupDirVolatile() ? '（本次有效）' : '');
+    return dirPickerSupported() ? '设置保存文件夹…' : '保存位置（浏览器下载）';
+  }
+  function saveDirMenuTitle() {
+    if (!dirPickerSupported()) {
+      return '当前浏览器不支持选文件夹，导出只能进浏览器默认下载文件夹；可在浏览器「设置 → 下载」里改默认目录';
+    }
+    if (backupDirVolatile()) {
+      return '文件夹句柄没能存住（本机 IndexedDB 不可用）：这次会话内导出会写进去，重开页面后需要重选一次';
+    }
+    return '选一次文件夹，之后所有导出（Markdown / JSON / 生词 CSV / 作文 / 模板 / 备份）都直接写进去，不再走浏览器下载';
+  }
   function buildMenus() {
     const toolbar = document.querySelector('.toolbar');
     if (!toolbar || toolbar.dataset.menusBuilt) return;
@@ -2945,7 +5603,7 @@
       const el = document.getElementById(id);
       if (el) el.remove();
     });
-    const examSlug = EXAM_SLUGS[decodeURIComponent(location.pathname.split('/').pop() || '')];
+    const examSlug = articleMeta.hasExam ? articleMeta.slug : '';
     const crossId = 'crossref-count';
 
     // 2) 视图 —— 怎么看这篇（6 组）
@@ -2962,6 +5620,10 @@
       '<button type="button" class="btn-icon btn-label" onclick="setTheme(\'blue-gold\')"><span>💎</span><span>蓝金</span></button>' +
       '<button type="button" class="btn-icon btn-label" onclick="setTheme(\'system\')"><span>⚙</span><span>系统</span></button></div>' +
       '<div class="menu-sep"></div>' +
+      '<div class="menu-section-label">阅读版式</div>' +
+      menuItemHTML('paper-mode-btn', '📰', '报纸版', '电子报版面：对开双页 + 多栏 + 翻版（← → 翻版）') +
+      menuItemHTML('reader-mode-btn', '▤', '三栏对照', '原文 / 摘要 / 译文 三栏并排 + 滚动同步（适合逐段精读与编辑）') +
+      '<div class="menu-sep"></div>' +
       menuItemHTML('toggle-header-btn', '📰', '标题区显隐') +
       menuItemHTML('freq-toggle-btn', '🎨', '词频着色') +
       '<div class="freq-legend"><span class="fl-h">高频</span><span class="fl-m">中频</span>' +
@@ -2969,17 +5631,25 @@
       menuItemHTML('undo-edit-btn', '↩', '撤销编辑', '撤销上一次对概要 / 中文 / 笔记的修改', 'Ctrl+Shift+Z') +
       menuItemHTML('shortcuts-help-btn', '⌨', '快捷键一览');
 
-    // 3) 考试 —— 题库入口（只在有题目的 9 篇出现）
+    // 3) 考试 —— 考试模式的 5 个模块，菜单由 <body data-exam-types> 动态生成（相互独立）
     const examMenu =
-      '<div class="menu-section-label">题库练习</div>' +
-      menuItemHTML('open-exam-btn', '📝', '模拟考试', '计时作答，交卷才揭晓对错') +
-      menuItemHTML('open-translation-btn', '✍', '翻译练习', '5 句长难句英译中 + 分点自评') +
-      menuItemHTML('open-cloze-btn', '🧩', '完形填空', '20 空，生词自动联动生词本') +
-      menuItemHTML('open-newtype-btn', '🔗', '新题型', '七选五 / 排序 / 小标题');
+      '<div class="menu-section-label">考试模式</div>' +
+      menuItemHTML('exam-hub-btn', '🎓', '考试模式总览', '本篇可用的全部考试模块，各自独立进入') +
+      '<div class="menu-sep"></div>' +
+      examModuleItems();
 
-    // 4) 数据 —— 存下来 / 拿回来 / 导出去
-    const dataMenu =
-      '<div class="menu-section-label">备份与恢复</div>' +
+    // 4) 数据 —— 存下来 / 拿回来 / 导出去 / 看分析
+    // 「错题本」与「能力雷达」都建立在既有数据上：4 个错题库 + wsj_exam:history 的逐题题型，
+    // 所以它们属于「数据」这一组 —— 看的是已经攒下来的东西。
+    const wrongN = (typeof dueWrongCount === 'function') ? dueWrongCount() : 0;    const dataMenu =
+      '<div class="menu-section-label">学习分析</div>' +
+      menuItemHTML('study-btn', '📚', '学习总览', '十篇文章一屏看完：进度 / 生词 / 长难句 / 素材 / 正确率 / 错题 / 默写') +
+      menuItemHTML('wrongbook-btn', '📕', wrongN > 0 ? '错题本（' + wrongN + ' 道待复习）' : '错题本',
+        '四个练习模块的错题汇总，按间隔重复安排复习，可就地重做', '', wrongN > 0 ? 'due-hot' : '') +
+      menuItemHTML('radar-panel-btn', '📡', '六题型能力雷达', '按细节 / 推理 / 主旨 / 态度 / 词义 / 例证 统计正确率') +
+      '<div class="menu-sep"></div><div class="menu-section-label">文件保存位置</div>' +
+      menuItemHTML('save-dir-btn', '📂', saveDirMenuLabel(), saveDirMenuTitle()) +
+      '<div class="menu-sep"></div><div class="menu-section-label">备份与恢复</div>' +
       menuItemHTML('backup-data-btn', '💾', '备份全部数据', '所有文章的标注 / 概要 / 翻译 / 考试记录打包成一个 JSON 文件') +
       menuItemHTML('backup-panel-btn', '📁', '备份记录与恢复…', '查看上次备份去了哪个文件夹，并从文件夹里挑一份恢复') +
       menuItemHTML('restore-data-btn', '⬆', '从文件恢复…', '选择任意一份 reader-backup-*.json') +
@@ -2997,11 +5667,13 @@
       menuItemHTML('crossref-btn', '🔗', '文章关联', '其他文章里出现的同一批生词', '', '',
         '<span class="crossref-count" id="crossref-count"></span>') +
       menuItemHTML('stats-panel-btn', '📊', '阅读统计') +
+      '<div class="menu-sep"></div><div class="menu-section-label">精读工具</div>' +
+      menuItemHTML('pfunc-btn', '🏷', '段落功能标签', '给每段标论点 / 论据 / 转折 / 结论 / 背景 / 例证，看清文章结构') +
+      menuItemHTML('vocabnet-btn', '🕸', '生词网络', '同一个词在多篇文章里出现的位置，点一下跳过去') +
+      menuItemHTML('dictation-btn', '🖊', '中译英默写', '看着本段中文译文默写英文原句，逐词比对、错词进错词本') +
+      menuItemHTML('derived-btn', '🎯', '正文派生标注', '把你标注过的长难句 / 写作素材也标在原文上（点击看内容）') +
       '<div class="menu-sep"></div><div class="menu-section-label">复习</div>' +
       menuItemHTML('review-due-btn', '🎯', dueN > 0 ? '今日待复习 ' + dueN + ' 条' : '复习生词（文库）', '到期生词与题型卡，跳转文库开始复习', '', dueN > 0 ? 'due-hot' : '') +
-      '<div class="menu-sep"></div><div class="menu-section-label">写作工坊</div>' +
-      menuItemHTML('writing-workshop-btn', '✍️', '写作工坊', '素材 / 建议文 / 长难句 / 词根 集中管理') +
-      menuItemHTML('compose-panel-btn', '🖊', '建议文积累（全文）') +
       '<div class="menu-sep"></div><div class="menu-section-label">AI 助手（右侧分屏）</div>' +
       menuItemHTML('ai-zhipu-btn', '🤖', '智谱清言') +
       menuItemHTML('ai-qwen-btn', '🤖', '通义千问') +
@@ -3043,8 +5715,11 @@
     };
     on('undo-edit-btn', undoEdit);
     on('shortcuts-help-btn', openShortcutsHelp);
+    on('paper-mode-btn', () => togglePaper(true));
+    on('reader-mode-btn', () => togglePaper(false));
     on('toggle-header-btn', toggleHeader); // 新菜单里的按钮没有 inline onclick，必须在这里绑
     on('backup-data-btn', () => { backupAllData(); });
+    on('save-dir-btn', () => { openSaveDirDialog(); });
     on('backup-panel-btn', openBackupPanel);
     on('restore-data-btn', restoreData);
     on('export-md-btn', exportMarkdown);
@@ -3054,8 +5729,17 @@
     on('toggle-search-btn', () => toggleSearch());
     on('crossref-btn', () => toggleCrossRef());
     on('stats-panel-btn', openStatsPanel);
-    on('compose-panel-btn', () => loadExamPanel().then(E => E.openComposePanel()).catch(()=>{}));
-    on('writing-workshop-btn', () => loadExamPanel().then(E => E.openWritingWorkshop()).catch(()=>{}));
+    on('exam-hub-btn', openExamHub);
+    // 精读分析台（11-insights.js）
+    on('wrongbook-btn', () => openWrongBook());
+    on('radar-panel-btn', () => openRadar());
+    on('pfunc-btn', () => openParaFuncPanel());
+    on('vocabnet-btn', () => openVocabNet());
+    on('dictation-btn', () => openDictation());
+    on('derived-btn', () => setDerivedOn(!derivedOn()));
+    on('study-btn', () => openStudyOverview());
+    // 考试模式各模块（按本篇 data-exam-types 动态绑定）
+    examModulesAvailable().forEach(m => on('exam-mod-' + m.key, () => examModuleOpen(m)));
     on('review-due-btn', openHub);
     on('ai-zhipu-btn', () => openAISide('zhipu'));
     on('ai-qwen-btn', () => openAISide('qwen'));
@@ -3063,24 +5747,19 @@
     on('compare-btn', openCompare);
     const freqBtn = document.getElementById('freq-toggle-btn');
     if (freqBtn) freqBtn.addEventListener('click', () => { toggleFreqColoring(); });
-    if (examSlug) {
-      on('open-exam-btn', () => { location.href = 'exam_' + examSlug + '.html'; });
-      on('open-translation-btn', () => { location.href = 'translation_' + examSlug + '.html'; });
-      on('open-cloze-btn', () => { location.href = 'cloze_' + examSlug + '.html'; });
-      on('open-newtype-btn', () => { location.href = 'newtype_' + examSlug + '.html'; });
-    }
     updateFreqBtn();
+    updatePaperButtons();
     injectExamModeToggle(examSlug);
   }
-  // 考试页状态提示：在考试下拉里显示当前是考试态还是练习态（由 exam.js 写入 localStorage）
+  // 考试页状态提示：在考试菜单的「阅读理解」项上标出当前是考试态还是练习态（由 exam.js 写入 localStorage）
   function injectExamModeToggle(examSlug) {
     if (!examSlug) return;
-    const btn = document.getElementById('open-exam-btn');
+    const btn = document.getElementById('exam-mod-reading');
     if (!btn) return;
     let mode = 'exam';
     try { mode = JSON.parse(localStorage.getItem('exammode:' + examSlug) || '"exam"'); } catch (e) {}
     const label = btn.querySelector('span:nth-child(2)');
-    if (label) label.textContent = '模拟考试（' + (mode === 'practice' ? '练习态' : '考试态') + '）';
+    if (label) label.textContent = '阅读理解（' + (mode === 'practice' ? '练习态' : '考试态') + '）';
   }
 
   // ===== Toolbar title cleanup: replace redundant title with source info =====
@@ -3145,14 +5824,25 @@
     setupScrollSync();
     setupFloatMenu();
     // Lazy-load exam-panel.js, then init exam-related UI
-    loadExamPanel().then(() => {
-      ensureExamUI();
-      setupSyntaxPanel();
-      upgradeSyntaxPanel();
-      upgradeMaterialPanel();
-    }).catch(() => {});
+    // ⚠ setupSyntaxPanel / upgradeSyntaxPanel / upgradeMaterialPanel 定义在 06-exam.js
+    //   自己的 IIFE 里，reader.js 作用域访问不到——必须经 window.__exam（即回调参数 E）调用。
+    //   曾因裸调用抛 ReferenceError 被 .catch 静默吞掉，导致句法/素材面板的升级代码从未执行。
+    loadExamPanel().then((E) => {
+      ensureExamUI();               // 本文件作用域（04-scroll.js）可直接调用
+      if (!E) return;
+      E.setupSyntaxPanel();
+      E.upgradeSyntaxPanel();
+      E.upgradeMaterialPanel();
+    }).catch((err) => { console.warn('[reader] exam-panel 初始化失败:', err); });
     // UX-6: defer first height sync to idle time (fallback: 250ms)
     deferInitialHeightSync();
+    // 段落功能标签：把已存的标签打到段落上（报纸版与三栏视图都能看到）
+    renderParaFuncs();
+    // F01：长难句 / 素材的派生标注（与上面的段落标签同属「段落装饰」，
+    // 都必须在 reapplyAllHighlights / 词频着色之后做，否则会被它们的 DOM 重写冲掉）
+    renderDerivedMarks();
+    // 从别的页面带 #para-N 跳进来时定位（等报纸版建好再跳，见 initHashJump）
+    initHashJump();
     // 其余运行时注入（UX-3 移动端列切换条、UX-8 搜索选项等）——文章 HTML 本体不动
     injectSearchOptions();
     wireMarkClickLocate();
@@ -3218,6 +5908,12 @@
     });
     initializing = false; // UX-5: operation toasts enabled after first load
     setTimeout(maybeRemindBackup, 4000); // 数据安全提醒（有积累且超 7 天未备份时）
+    // 恢复上次选的阅读版式。报纸版是覆盖层且要按真实排版分版，必须等字体/布局稳定后再建。
+    if (paperModeOn()) {
+      const bootPaper = () => setTimeout(() => { if (paperModeOn() && !paperIsOpen()) togglePaper(true); }, 30);
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(bootPaper).catch(bootPaper);
+      else bootPaper();
+    }
   });
 
   // Expose handlers used by inline onclick
@@ -3265,6 +5961,13 @@
   }
   // 下拉贴在触发按钮下方；贴边时向内收，绝不超出工具栏宽度
   function positionMenu(menu, btn) {
+    // 报纸模式下触发按钮被搬进报眉的栏目索引栏（已不在 .toolbar 内）。
+    // 此时不写 inline 偏移：下拉由 CSS 锚在各自栏目按钮的正下方，
+    // 否则会残留三栏模式算出的 left 值，弹到按钮右边去。
+    if (btn.closest('.np-menus')) {
+      menu.style.left = ''; menu.style.right = ''; menu.style.top = '';
+      return;
+    }
     const bar = btn.closest('.toolbar');
     if (!bar) { menu.style.left = '0'; return; }
     const bb = bar.getBoundingClientRect();
@@ -3327,12 +6030,19 @@
 
   // ===== Bridge to exam-panel.js (lazy-loaded external script) =====
   window.__reader = {
-    esc, genId, articleId,
+    esc, genId, articleId, articleMeta,
     get annotations() { return annotations; },
     saveAnnotations, renderNotes,
+    // 普通标注的统一入口（浮动菜单与外部注入都用它）—— 暴露出来是为了让
+    // 「理解偏差」这类新 bucket 可被单独验证，也方便 exam-panel 直接建标注
+    addAnnotation, deleteAnnotation,
     get settings() { return settings; },
     saveSettings, closeAllMenus,
     showTopToast, getShortTitle,
+    // 统一落盘：exam-panel.js（独立 IIFE）与将来的模块都靠这两个往「用户选的文件夹」写文件，
+    // 没有它们就只能退回 <a download> → 浏览器默认下载文件夹（这正是用户抱怨的那件事）
+    saveFile, saveResultToast, sanitizeFilename,
+    pickBackupDir, getBackupDir, forgetBackupDir, dirPickerSupported,
     get qTypeFilter() { return qTypeFilter; },
     set qTypeFilter(v) { qTypeFilter = v; },
     get qMasteryFilter() { return qMasteryFilter; },
