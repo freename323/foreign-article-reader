@@ -26,7 +26,10 @@ MODULES = [
     '07-wordfreq.js',
     '08-search.js',
     '09-reading.js',
-    '10-toolbar.js',
+    '10-newspaper.js',   # 报纸版阅读模式（电子报 + 翻版）
+    '11-insights.js',    # 精读分析台（错题本 / 能力雷达 / 段落功能 / 生词网络）
+    '12-dictation.js',   # F11 中译英默写（看着中文默写英文，LCS 逐词比对 + 错词本）
+    '10-toolbar.js',     # ⚠ 必须留在最后：它闭合 IIFE（})();）并定义 window.__reader 桥
 ]
 
 
