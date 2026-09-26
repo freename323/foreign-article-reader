@@ -113,13 +113,16 @@
   }
 
   // ===== Annotations =====
-  // Bucket: 'vocab' (生词本, includes vocab+unclear) | 'note' (笔记, includes note)
-  // Vocab is the most-used feature so it gets its own panel; notes is separate.
+  // Bucket: 'vocab'（生词本）| 'note'（笔记）| 'misread'（理解偏差，F16）| 'qtype'（题型）
+  // 'paraFunc'（段落功能，F02）不是文本标注，是段落级元数据，渲染与计数都要排除它。
+  // ⚠ type → bucket 的映射只能在这里做：addAnnotation 是浮动菜单所有普通标注的唯一入口，
+  //   漏一个 type 就会被默认归到 vocab（曾导致「理解偏差」进了生词本）。
+  const ANNOTATION_BUCKETS = { note: 'note', misread: 'misread', vocab: 'vocab' };
   function addAnnotation(type, text, context, note, source, paraIdx, line) {
     if (!text || !text.trim()) return;
     const dup = annotations.find(a => a.text === text && a.source === source);
     if (dup) { flashNote(dup.id); return; }
-    const bucket = (type === 'note') ? 'note' : 'vocab';
+    const bucket = ANNOTATION_BUCKETS[type] || 'vocab';
     const ann = {
       id: genId(), type, bucket, text: text.trim(), context: context || '',
       note: note || '', source: source || 'en', paraIdx: paraIdx || '',
