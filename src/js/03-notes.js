@@ -123,12 +123,15 @@
     const vocabCount = annotations.filter(a => a.bucket === 'vocab').length;
     const noteCount = annotations.filter(a => a.bucket === 'note').length;
     const qtypeCount = annotations.filter(a => a.bucket === 'qtype').length;
+    const misreadCount = annotations.filter(a => a.bucket === 'misread').length;
     const sessionCount = (readingData.sessions || []).length;
+    const allCount = annotations.filter(a => a.bucket !== 'paraFunc').length;
     let tabsHtml = `<div class="notes-tabs">
       <button data-notes-bucket="vocab" class="${notesBucket === 'vocab' ? 'active' : ''}">📖 生词本 ${vocabCount > 0 ? '(' + vocabCount + ')' : ''}</button>
       <button data-notes-bucket="note" class="${notesBucket === 'note' ? 'active' : ''}">📝 笔记 ${noteCount > 0 ? '(' + noteCount + ')' : ''}</button>
       <button data-notes-bucket="qtype" class="${notesBucket === 'qtype' ? 'active' : ''}">🎓 题型 ${qtypeCount > 0 ? '(' + qtypeCount + ')' : ''}</button>
-      <button data-notes-bucket="all" class="${notesBucket === 'all' ? 'active' : ''}">全部 ${annotations.length > 0 ? '(' + annotations.length + ')' : ''}</button>
+      <button data-notes-bucket="misread" class="${notesBucket === 'misread' ? 'active' : ''}" title="阅读时读错、译错、想岔的地方 —— 这些是最高价值的复习点">🌀 理解偏差 ${misreadCount > 0 ? '(' + misreadCount + ')' : ''}</button>
+      <button data-notes-bucket="all" class="${notesBucket === 'all' ? 'active' : ''}">全部 ${allCount > 0 ? '(' + allCount + ')' : ''}</button>
       <button data-notes-bucket="timeline" class="${notesBucket === 'timeline' ? 'active' : ''}">⏰ 时间表 ${sessionCount > 0 ? '(' + sessionCount + ')' : ''}</button>
     </div>
     <div class="notes-jump-nav">
@@ -173,7 +176,10 @@
       return;
     }
     // Filter by bucket
-    const bucketAnns = notesBucket === 'all' ? annotations : annotations.filter(a => a.bucket === notesBucket);
+    // ⚠ paraFunc（段落功能标签）是**段落级**的元数据，不是文本标注：
+    //   它没有选中文本、不该出现在标注列表里，由「工具 → 段落功能标签」面板单独管理。
+    const visibleAnns = annotations.filter(a => a.bucket !== 'paraFunc');
+    const bucketAnns = notesBucket === 'all' ? visibleAnns : visibleAnns.filter(a => a.bucket === notesBucket);
     if (bucketAnns.length === 0) {
       list.innerHTML = tabsHtml + `<div class="empty-hint">${notesBucket === 'vocab' ? '生词本' : '笔记'}还是空的。<br>选中文本 → 选类型 → 标注会出现在这里。</div>`;
       list.querySelectorAll('[data-notes-bucket]').forEach(btn => {
@@ -193,7 +199,7 @@
       updateJumpNav();
       return;
     }
-    const typeName = { vocab: '📖 生词', unclear: '❓ 不懂', note: '💡 备注' };
+    const typeName = { vocab: '📖 生词', unclear: '❓ 不懂', note: '💡 备注', misread: '🌀 理解偏差' };
     const sorted = filtered.slice().sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
     const groups = groupByDate(sorted);
     let cardsHtml = '';
@@ -294,7 +300,11 @@
   }
   function updateNoteCount() {
     const el = document.getElementById('note-count');
-    if (el) el.textContent = annotations.length > 0 ? annotations.length : '';
+    // 与笔记面板的「全部」页签保持一致：段落功能标签是段落级元数据，不计入标注条数
+    if (el) {
+      const n = annotations.filter(a => a.bucket !== 'paraFunc').length;
+      el.textContent = n > 0 ? n : '';
+    }
   }
 
   // ===== FEATURE: Notes-panel search (标注内容过滤，跨所有 tab) =====
