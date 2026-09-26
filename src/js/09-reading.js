@@ -43,10 +43,15 @@
   function updateTimerDisplay() {
     const se = document.getElementById('session-timer');
     const te = document.getElementById('total-timer');
-    if (se) se.textContent = '⏱ ' + fmtTime(sessionSeconds);
-    if (te) te.textContent = '📊 ' + fmtTime(readingData.totalSeconds);
-    if (se) se.title = '本次阅读时长 ' + fmtTime(sessionSeconds);
-    if (te) te.title = '累计阅读时长 ' + fmtTime(readingData.totalSeconds);
+    // 只写时间本身，标签交给 CSS（报纸版读作「已读 / 累计」，三栏视图读作 ⏱ / 📊）
+    if (se) {
+      se.textContent = fmtTime(sessionSeconds);
+      se.title = '本次阅读时长 ' + fmtTime(sessionSeconds);
+    }
+    if (te) {
+      te.textContent = fmtTime(readingData.totalSeconds);
+      te.title = '累计阅读时长 ' + fmtTime(readingData.totalSeconds);
+    }
   }
   function startTimer() {
     if (timerInterval) return;
@@ -81,16 +86,22 @@
   }
 
   // --- Reading position ---
+  // 记录的是「段号 data-para-idx」而非位置序号 —— 报纸阅读页会把段落分到不同版，
+  // 位置序号会随分版结果漂移，段号才稳定。
   function getCurrentPosition() {
-    const enCol = document.querySelector('.col-body.en');
+    // 报纸阅读页：位置 = 当前版第一段的段号
+    if (typeof paperIsOpen === 'function' && paperIsOpen()) {
+      return (typeof paperCurrentParaIdx === 'function') ? paperCurrentParaIdx() : null;
+    }
+    const enCol = document.querySelector('.main-wrap .col-body.en') || document.querySelector('.col-body.en');
     if (!enCol) return null;
-    const paras = enCol.querySelectorAll('p');
+    const paras = enCol.querySelectorAll('p[data-para-idx]');
     if (paras.length === 0) return null;
     const colTop = enCol.getBoundingClientRect().top;
-    let best = 0;
-    paras.forEach((p, i) => {
+    let best = null;
+    paras.forEach((p) => {
       const rect = p.getBoundingClientRect();
-      if (rect.top <= colTop + 80) best = i;
+      if (rect.top <= colTop + 80) best = parseInt(p.dataset.paraIdx, 10);
     });
     return best;
   }
@@ -127,18 +138,30 @@
   function jumpToLastPosition() {
     loadReading();
     if (readingData.lastPosition === null) return;
-    const enCol = document.querySelector('.col-body.en');
+    // 报纸阅读页：先翻到含该段的那一版，再高亮该段
+    if (typeof paperIsOpen === 'function' && paperIsOpen()) {
+      const idx = readingData.lastPosition;
+      if (typeof window.paperGotoParaIdx === 'function') window.paperGotoParaIdx(idx);
+      const el = document.querySelector('.np-leaf-en p[data-para-idx="' + idx + '"]');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.style.outline = '2px solid var(--cn-tag)';
+        el.style.outlineOffset = '2px';
+        setTimeout(() => { el.style.outline = 'none'; }, 2500);
+      }
+      const bb = document.getElementById('bookmark-btn');
+      if (bb) bb.style.display = 'none';
+      return;
+    }
+    const enCol = document.querySelector('.main-wrap .col-body.en') || document.querySelector('.col-body.en');
     if (!enCol) return;
-    const paras = enCol.querySelectorAll('p');
-    const idx = Math.min(readingData.lastPosition, paras.length - 1);
-    if (paras[idx]) {
-      paras[idx].scrollIntoView({ behavior: 'smooth', block: 'start' });
-      paras[idx].style.outline = '2px solid var(--cn-tag)';
-      paras[idx].style.outlineOffset = '2px';
-      paras[idx].style.transition = 'outline 0.3s';
-      setTimeout(() => {
-        paras[idx].style.outline = 'none';
-      }, 2500);
+    const el = enCol.querySelector('p[data-para-idx="' + readingData.lastPosition + '"]');
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      el.style.outline = '2px solid var(--cn-tag)';
+      el.style.outlineOffset = '2px';
+      el.style.transition = 'outline 0.3s';
+      setTimeout(() => { el.style.outline = 'none'; }, 2500);
     }
     const btn = document.getElementById('bookmark-btn');
     if (btn) btn.style.display = 'none';
@@ -150,8 +173,19 @@
     'wsj_review:', 'wsj_reader:',
     'examq:', 'examtimer:', 'examlimit:', 'exammode:', 'exammark:', 'examansheet:', 'examhist:', 'examhl:', 'examsess:',
     'cz:', 'transq:', 'transtimer:', 'nt:'];
+  // ⚠ 新增独立键时**必须**加进这两个白名单，否则备份会静默漏掉它（不报错、只是丢数据）。
+  //   曾经就漏过——完形 / 新题型 / 翻译三个模块的错题库（wsj_cloze / wsj_newtype /
+  //   wsj_translation）一直是写了但没备份，错题本的 4 个库里只有 1 个进得了备份文件。
   const BACKUP_EXACT_KEYS = ['wsj_writing:materials', 'wsj_writing:advice', 'wsj_roots:cards',
-    'wsj_exam:wrongs', 'wsj_exam:overtime', 'wsj_exam:history', 'wsj_exam:theme'];
+    // 写作工坊：作文模板库 + 大小作文草稿 + 自由笔记（F05/F06/F17）+ 同义替换表（F08）
+    'wsj_writing:templates', 'wsj_writing:essays', 'wsj_writing:notes', 'wsj_writing:synonyms',
+    'wsj_exam:wrongs', 'wsj_exam:overtime', 'wsj_exam:history', 'wsj_exam:theme',
+    // 三个练习页自己的错题库（错题本会把它们和 wsj_exam:wrongs 合并成一张清单）
+    'wsj_cloze:wrongs', 'wsj_newtype:wrongs', 'wsj_translation:wrongs',
+    // 错题本的复习调度（间隔重复）—— 11-insights.js
+    'wsj_wrongrev',
+    // 中译英默写：每题成绩 + 错词本 —— 12-dictation.js
+    'wsj_dictation:stats', 'wsj_dictation:wrongs'];
   function collectAppKeys() {
     const keys = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -164,8 +198,35 @@
   // ---- 备份落盘：记住一个本机文件夹 → 之后一键写进去；不支持时降级为下载并讲清去向 ----
   const IDB_NAME = 'english-reader-files';
   const IDB_STORE = 'handles';
-  const BACKUP_LOG_KEY = '***';
-  const BACKUP_DIR_NAME_KEY = '***';
+  // ⚠ 这两个 key 历史上都被误写成同一个字面量 '***'：
+  //   * 「备份记录」与「备份文件夹名」互相覆盖——写一个就冲掉另一个；
+  //   * 与读取端 parseLS（走 JSON.parse）的约定不一致，文件夹名永远读不回来。
+  // 现改为独立 key，并做一次幂等抢救迁移。
+  const BACKUP_LOG_KEY = 'wsj_reader:backupLog';
+  const BACKUP_DIR_NAME_KEY = 'wsj_reader:backupDirName';
+  // 句柄没能存进 IndexedDB 时置位：这次会话能用，重启后还得重选。要如实告诉用户，
+  // 否则会出现「明明设过，下次又下载」这种静默失效。
+  const BACKUP_DIR_VOLATILE_KEY = 'wsj_reader:backupDirVolatile';
+  const BACKUP_LEGACY_KEY = '***';
+  (function migrateLegacyBackupKeys() {
+    let legacy = null;
+    try { legacy = localStorage.getItem(BACKUP_LEGACY_KEY); } catch (e) { return; }
+    if (!legacy) return;
+    let parsed = null, isJson = true;
+    try { parsed = JSON.parse(legacy); } catch (e) { isJson = false; }
+    try {
+      if (isJson && Array.isArray(parsed)) {
+        if (!localStorage.getItem(BACKUP_LOG_KEY)) localStorage.setItem(BACKUP_LOG_KEY, legacy);
+      } else {
+        // 旧代码写入文件夹名时没有 JSON.stringify，故非 JSON 的裸串也按文件夹名抢救
+        const name = (isJson && typeof parsed === 'string') ? parsed : (isJson ? null : legacy);
+        if (name && !localStorage.getItem(BACKUP_DIR_NAME_KEY)) {
+          localStorage.setItem(BACKUP_DIR_NAME_KEY, JSON.stringify(name));
+        }
+      }
+    } catch (e) {}
+    try { localStorage.removeItem(BACKUP_LEGACY_KEY); } catch (e) {}
+  })();
   function idbOpen() {
     return new Promise((resolve, reject) => {
       let req;
@@ -191,26 +252,125 @@
       rq.onerror = () => reject(rq.error);
     }));
   }
+  // ⚠ 任何一次 IDB 调用都必须有超时：IndexedDB 在部分环境（file:// 的某些浏览器版本、
+  //   隐私模式、被策略禁用）会**既不成功也不失败**，直接挂住。挂住的后果是
+  //   saveFile 卡在 await 上 —— 用户点「导出」什么都不会发生，比下载更糟。
+  function withTimeout(p, ms, fallback) {
+    return Promise.race([
+      p.catch(() => fallback),
+      new Promise(r => setTimeout(() => r(fallback), ms))
+    ]);
+  }
   function dirPickerSupported() {
     return typeof window.showDirectoryPicker === 'function' && typeof indexedDB !== 'undefined';
   }
+  // 句柄缓存 + 权限记忆：保证「点导出」到「真的要写盘」之间不夹多余的 await。
+  // 原因：requestPermission 依赖「用户激活」（transient activation），中间多一次
+  // IndexedDB 往返就可能把它耗掉，于是明明授权过却每次都要重新问。
+  let dirHandleCache = null;
+  let dirPermOk = false;
   async function getBackupDir() {
     if (!dirPickerSupported()) return null;
-    try { return await idbGet('backupDir'); } catch (e) { return null; }
+    if (dirHandleCache) return dirHandleCache;
+    const h = await withTimeout(idbGet('backupDir'), 700, null);
+    if (h) dirHandleCache = h;
+    return h || null;
   }
   async function pickBackupDir() {
     const h = await window.showDirectoryPicker({ id: 'reader-backup-dir', mode: 'readwrite' });
-    await idbPut(h, 'backupDir');
-    try { localStorage.setItem(BACKUP_DIR_NAME_KEY, h.name || ''); } catch (e) {}
+    // 先把句柄放进内存缓存：即使下面 IDB 写失败，本次会话内的导出也已经能直写了
+    dirHandleCache = h; dirPermOk = true;
+    // 句柄只能存 IndexedDB（localStorage 存不了对象句柄）
+    const persisted = await withTimeout(idbPut(h, 'backupDir').then(() => true), 1500, false);
+    try {
+      // 必须 JSON.stringify：读取端用 parseLS（JSON.parse），裸串会解析失败而永远显示不出来
+      localStorage.setItem(BACKUP_DIR_NAME_KEY, JSON.stringify(h.name || ''));
+      if (persisted) localStorage.removeItem(BACKUP_DIR_VOLATILE_KEY);
+      else localStorage.setItem(BACKUP_DIR_VOLATILE_KEY, JSON.stringify('1'));
+    } catch (e) {}
     return h;
+  }
+  function backupDirVolatile() { return parseLS(BACKUP_DIR_VOLATILE_KEY, '') === '1'; }
+  function forgetBackupDir() {
+    dirHandleCache = null; dirPermOk = false;
+    try { localStorage.removeItem(BACKUP_DIR_NAME_KEY); } catch (e) {}
+    try { localStorage.removeItem(BACKUP_DIR_VOLATILE_KEY); } catch (e) {}
+    try { withTimeout(idbPut(null, 'backupDir'), 1500, false); } catch (e) {}
   }
   async function ensureDirPermission(h) {
     if (!h || !h.queryPermission) return true;
+    if (dirPermOk && h === dirHandleCache) return true;
     const d = { mode: 'readwrite' };
     try {
-      if (await h.queryPermission(d) === 'granted') return true;
-      return (await h.requestPermission(d)) === 'granted';
+      if (await h.queryPermission(d) === 'granted') { dirPermOk = true; return true; }
+      const ok = (await h.requestPermission(d)) === 'granted';
+      if (ok) dirPermOk = true;
+      return ok;
     } catch (e) { return false; }
+  }
+  // ---- 文件名净化：走文件夹直写时，非法字符不再由浏览器兜底，会直接抛异常 ----
+  function sanitizeFilename(name) {
+    let n = String(name == null ? '' : name)
+      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-')      // Windows 非法字符（导出标题里最常见的冒号）
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^\.+/, '')                              // 不能以点开头
+      .replace(/[. ]+$/, '');                           // Windows 不允许以点/空格结尾
+    if (!n) n = 'untitled';
+    const m = /^(.*?)(\.[A-Za-z0-9]{1,8})$/.exec(n);
+    const base = m ? m[1] : n, ext = m ? m[2] : '';
+    n = (base.length > 80 ? base.slice(0, 80) : base) + ext;
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(base)) n = '_' + n;
+    return n;
+  }
+  // 已存在就换名（导出同一篇两次不该互相覆盖，也不该静默丢内容）
+  async function uniqueFileName(dir, name) {
+    const m = /^(.*?)(\.\w{1,8})?$/.exec(name);
+    const base = m[1], ext = m[2] || '';
+    for (let i = 1; i <= 20; i++) {
+      const cand = i === 1 ? name : base + ' (' + i + ')' + ext;
+      try { await dir.getFileHandle(cand); }
+      catch (e) { return cand; }   // 取不到 = 不存在 = 这个能用
+    }
+    return base + ' (' + Date.now() + ')' + ext;
+  }
+  // ---- 统一落盘入口：所有导出 / 备份都走这里 ----
+  // Web 平台刻意不允许网页自行决定保存路径（防静默写盘），只有 File System Access
+  // 拿到用户亲手授权过的目录句柄才能直写。所以：
+  //   有句柄  → 直接写进那个文件夹（不再走浏览器下载）
+  //   无句柄  → 退回下载，并明确告诉用户去哪儿找、怎么固定位置
+  async function saveFile(name, text, type, opts) {
+    const o = opts || {};
+    const safe = sanitizeFilename(name);
+    if (dirPickerSupported()) {
+      let dir = null;
+      try {
+        dir = await getBackupDir();
+        if (dir && !(await withTimeout(ensureDirPermission(dir), 1200, false))) dir = null;
+      } catch (e) { dir = null; }
+      if (dir) {
+        try {
+          const target = o.overwrite ? safe : await uniqueFileName(dir, safe);
+          await writeToDir(dir, target, text);
+          return { where: 'folder', dir: dir.name || '所选文件夹', name: target, renamed: target !== safe };
+        } catch (e) {
+          // 写失败（权限被撤、文件被占用、句柄过期）→ 降级下载，但把原因说清楚
+          o.fallbackReason = (e && e.message) ? e.message : String(e);
+        }
+      }
+    }
+    downloadFile(safe, text, type || 'text/plain;charset=utf-8');
+    return { where: 'download', dir: '浏览器下载文件夹', name: safe, renamed: safe !== name, reason: o.fallbackReason || '' };
+  }
+  // 保存结果 → 一句用户看得懂的话
+  function saveResultToast(r, verb) {
+    const v = verb || '已保存';
+    if (r.where === 'folder') {
+      return '✅ ' + v + '到文件夹「' + r.dir + '」／' + r.name + (r.renamed ? '（重名已自动编号）' : '');
+    }
+    return '⬇ ' + v + '，但走的是浏览器下载 → 请到「下载」文件夹找 ' + r.name +
+      (r.reason ? '（写入文件夹失败：' + r.reason + '）' : '') +
+      '\n要固定存放位置：数据 ▾ → 📂 设置保存文件夹（选一次，以后都写进去）';
   }
   function backupStamp() {
     const d = new Date(), pad = n => String(n).padStart(2, '0');
@@ -251,38 +411,29 @@
       showTopToast('备份失败：' + (e && e.message ? e.message : '未知错误'));
       return;
     }
+    // 备份与导出共用一条落盘路径；唯一区别是「没设过文件夹时先弹一次选择器」
+    // （备份是低频、明确的数据安全动作，值得打断一次；导出天天用，不适合每次弹）
     if (dirPickerSupported()) {
       let dir = null;
-      try {
-        dir = await getBackupDir();
-        if (!dir || !(await ensureDirPermission(dir))) dir = await pickBackupDir();
-      } catch (e) {
-        if (e && e.name === 'AbortError') { showTopToast('已取消备份'); return; }
-        dir = null;
-      }
-      if (dir) {
-        try {
-          await writeToDir(dir, name, text);
-          const dirName = dir.name || '所选文件夹';
-          try { localStorage.setItem('wsj_reader:lastBackupAt', JSON.stringify(new Date().toISOString())); } catch (e) {}
-          logBackup({ at: new Date().toISOString(), file: name, where: 'folder', dir: dirName,
-            size: backupSizeText(payload), keys: Object.keys(payload.data).length });
-          showTopToast('✅ 已备份到文件夹「' + dirName + '」／' + name + '（下次一键备份到同一处）', 5200);
-          return;
-        } catch (e) {
-          showTopToast('写入文件夹失败，改为下载：' + (e && e.message ? e.message : e), 4000);
+      try { dir = await getBackupDir(); } catch (e) { dir = null; }
+      if (dir && !(await ensureDirPermission(dir))) dir = null;
+      if (!dir) {
+        try { dir = await pickBackupDir(); }
+        catch (e) {
+          if (e && e.name === 'AbortError') { showTopToast('已取消备份'); return; }
+          dir = null;
         }
       }
     }
-    try {
-      downloadFile(name, text, 'application/json;charset=utf-8');
-      try { localStorage.setItem('wsj_reader:lastBackupAt', JSON.stringify(new Date().toISOString())); } catch (e) {}
-      logBackup({ at: new Date().toISOString(), file: name, where: 'download', dir: '浏览器下载文件夹',
-        size: backupSizeText(payload), keys: Object.keys(payload.data).length });
-      showTopToast('⬇ 已下载 ' + name + '\n→ 请在浏览器下载记录里找这个文件（通常在「下载」文件夹）。\n要固定存放位置：💾 数据 ▾ → 选择备份文件夹', 7000);
-    } catch (e) {
-      showTopToast('备份失败：' + (e && e.message ? e.message : '未知错误'));
-    }
+    const r = await saveFile(name, text, 'application/json;charset=utf-8');
+    // 备份固定覆盖同一分钟的重名文件（saveFile 默认改名为 xxx (2).json —— 备份宁可多留一份也不覆盖）
+    try { localStorage.setItem('wsj_reader:lastBackupAt', JSON.stringify(new Date().toISOString())); } catch (e) {}
+    logBackup({ at: new Date().toISOString(), file: r.name,
+      where: r.where === 'folder' ? 'folder' : 'download',
+      dir: r.where === 'folder' ? r.dir : '浏览器下载文件夹',
+      size: backupSizeText(payload), keys: Object.keys(payload.data).length });
+    if (r.where === 'folder') showTopToast('✅ 已备份到文件夹「' + r.dir + '」／' + r.name + '（下次一键备份到同一处）', 5200);
+    else showTopToast(saveResultToast(r, '已备份') + (r.reason ? '' : '\n（备份是低频操作，建议先选一次文件夹）'), 7000);
   }
   // 备份提醒：有积累数据且超过设定天数没备份时，打开文章页温和提示一次
   function maybeRemindBackup() {
@@ -444,6 +595,65 @@
   function closeBackupPanel() {
     const o = document.getElementById('backup-overlay');
     if (o) o.remove();
+  }
+  // 「设置保存文件夹」：把所有导出动作的落点从「浏览器下载文件夹」改到用户指定的文件夹
+  function openSaveDirDialog() {
+    closeAllMenus();
+    const old = document.getElementById('save-dir-overlay');
+    if (old) old.remove();
+    const saved = parseLS(BACKUP_DIR_NAME_KEY, '');
+    const sup = dirPickerSupported();
+    const overlay = document.createElement('div');
+    overlay.className = 'backup-overlay';
+    overlay.id = 'save-dir-overlay';
+    overlay.innerHTML =
+      '<div class="backup-box">' +
+      '<div class="bk-head"><h3>📂 文件保存位置</h3><button type="button" class="bk-close" title="关闭">✕</button></div>' +
+      '<div class="bk-facts">' +
+      '<div><span class="bk-k">当前</span><span class="bk-v">' +
+      esc(saved || (sup ? '未设置 —— 导出会进浏览器默认的「下载」文件夹' : '浏览器不支持，只能用「下载」文件夹')) +
+      (saved && backupDirVolatile() ? '（本机存不住句柄，重开页面后要重选一次）' : '') + '</span></div>' +
+      '<div><span class="bk-k">会跟着变的</span><span class="bk-v">Markdown 笔记 / JSON / 生词 CSV / 作文 / 模板 / 同义表 / 全部数据备份</span></div>' +
+      '</div>' +
+      '<div class="bk-actions">' +
+      (sup ? '<button type="button" class="bk-btn primary" data-act="pick">' + (saved ? '更换文件夹' : '选择文件夹') + '</button>' : '') +
+      (saved ? '<button type="button" class="bk-btn" data-act="forget">清除保存位置</button>' : '') +
+      '<button type="button" class="bk-btn" data-act="close">关闭</button>' +
+      '</div>' +
+      '<div class="bk-note">浏览器出于安全不允许网页自己决定保存路径（否则任何网页都能往你的磁盘里塞文件），' +
+      '所以只能由你亲手选一次。选过之后本机记住这个文件夹，之后所有导出与备份都直接写进去，不再走下载。' +
+      (sup ? '' : '<br>当前浏览器不支持选文件夹：可到浏览器「设置 → 下载」里改默认下载目录作为替代。') +
+      '</div></div>';
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    const refreshLabel = () => {
+      const btn = document.getElementById('save-dir-btn');
+      if (!btn) return;
+      const spans = btn.querySelectorAll('span');
+      if (spans[1]) spans[1].textContent = saveDirMenuLabel();
+    };
+    overlay.querySelector('.bk-close').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    const pick = overlay.querySelector('[data-act="pick"]');
+    if (pick) pick.addEventListener('click', async () => {
+      try {
+        const h = await pickBackupDir();   // 必须在点击的手势里调用
+        showTopToast('✅ 保存位置已设为「' + (h.name || '所选文件夹') + '」——之后导出与备份都直接写进去', 5200);
+        refreshLabel();
+        close();
+      } catch (e) {
+        if (e && e.name !== 'AbortError') showTopToast('选择文件夹失败：' + (e && e.message ? e.message : e));
+      }
+    });
+    const forget = overlay.querySelector('[data-act="forget"]');
+    if (forget) forget.addEventListener('click', () => {
+      if (!confirm('清除保存位置？之后导出会重新回到浏览器默认下载文件夹（已保存的文件不受影响）。')) return;
+      forgetBackupDir();
+      showTopToast('已清除保存位置，导出将回到浏览器下载文件夹');
+      refreshLabel();
+      close();
+    });
+    overlay.querySelector('[data-act="close"]').addEventListener('click', close);
   }
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && document.getElementById('backup-overlay')) closeBackupPanel();
