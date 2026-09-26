@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   --bg: #fafaf7; --fg: #1a1a1a; --muted: #666; --rule: #d4d0c8;
   --bq-bg: #f3efe6; --bq-border: #888; --bq-fg: #444;
   --en-tag: #1a3a6c; --cn-tag: #b22222;
@@ -11,6 +11,28 @@
   --toolbar-h: 44px;
   --accent-bg: rgba(124,77,255,0.08); --stag: #5c6bc0;
   --art-ink: #4a4640; --art-gold: #a07d1c;
+  /* ===================================================================
+     别名补齐（历史遗留）
+     -------------------------------------------------------------------
+     --accent / --border / --panel-bg / --text-muted / --card-bg / --hover-bg / --np-font
+     这七个名字被 var() 引用了 40 多处，但**从来没有被声明过**。
+     CSS 里 var() 取不到值的后果不是「回退到默认颜色」，而是**整条声明在计算值阶段失效**
+     （invalid at computed-value time → 该属性退回 unset）。实测表现：
+       · .workshop-tab.active / .ins-btn / .ws-import-actions .primary —— background 变透明，
+         color 还是 #fff → 白底白字，按钮和页签名完全看不见；
+       · .workshop-card / .workshop-tab —— border 整条失效，卡片没有边框；
+       · .note-list-item:hover —— 没有悬停底色。
+     这里统一补成别名，主题里再各自覆盖强调色。
+     =================================================================== */
+  --accent: #1a3a6c;
+  --border: var(--rule);
+  --panel-bg: var(--summary-bg);
+  --text-muted: var(--muted);
+  --card-bg: var(--summary-bg);
+  --hover-bg: rgba(0,0,0,0.05);
+  /* ⚠ 这里**故意不声明 --np-font**：它不是字体，而是报纸版字号，由 JS 写到 <html> 的内联样式上
+     （paperApplyFont）。任何在 CSS 里声明它的地方都会盖掉内联值，让 A+/A− 失效
+     —— 包括 body.paper-open 这种「祖先级」声明。 */
 }
 [data-theme="dark"] {
   --bg: #16181c; --fg: #e8e6e1; --muted: #9a978f; --rule: #3a3d44;
@@ -20,6 +42,8 @@
   --header-bg: #1f1d18; --notes-bg: #1c1f24; --notes-border: #2c2f36;
   --accent-bg: rgba(179,136,255,0.12); --stag: #7986cb;
   --art-ink: #b8b4a8; --art-gold: #d4b254;
+  --accent: #4a6fa5; --hover-bg: rgba(255,255,255,0.08);
+  --border: var(--rule); --panel-bg: var(--summary-bg); --text-muted: var(--muted); --card-bg: var(--summary-bg);
 }
 /* 绿金主题（偏暗）：深墨绿底 + 金色强调；组件级特殊规则与暗色主题共用 */
 [data-theme="green"] {
@@ -31,6 +55,8 @@
   --header-bg: #e8eed7; --notes-bg: #e7edD6; --notes-border: #bcc9a4;
   --accent-bg: rgba(176,145,39,0.16); --stag: #9c8524;
   --art-ink: #4d5836; --art-gold: #c9a227;
+  --accent: #3f5620; --hover-bg: rgba(0,0,0,0.05);
+  --border: var(--rule); --panel-bg: var(--summary-bg); --text-muted: var(--muted); --card-bg: var(--summary-bg);
 }
 /* 蓝金色主题：深藏蓝底 + 金色强调 */
 [data-theme="blue-gold"] {
@@ -42,6 +68,8 @@
   --header-bg: #151e30; --notes-bg: #131d30; --notes-border: #2a3650;
   --accent-bg: rgba(212,168,48,0.15); --stag: #d4a830;
   --art-ink: #b0aaa0; --art-gold: #d4a830;
+  --accent: #8a6a14; --hover-bg: rgba(255,255,255,0.07);
+  --border: var(--rule); --panel-bg: var(--summary-bg); --text-muted: var(--muted); --card-bg: var(--summary-bg);
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
@@ -317,11 +345,13 @@ mark.search-hl.current { background: #ff7043; color: #fff; }
   border: 1px solid var(--rule); border-radius: 2px;
   background: var(--summary-bg);
 }
-.art-block svg .ink { stroke: var(--art-ink); fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.art-block svg .ink-fill { fill: var(--art-ink); stroke: none; }
-.art-block svg .gold { fill: var(--art-gold); stroke: none; }
-.art-block svg .gold-line { stroke: var(--art-gold); fill: none; stroke-width: 1.8; stroke-linecap: round; }
-.art-block svg .soft { stroke: var(--art-ink); fill: none; stroke-width: 1; opacity: 0.45; }
+/* ⚠ 这些线稿类要同时覆盖 .art-block（阅读页原插画）与 .np-fig（报纸版题图）：
+   只写 .art-block 的话，复制进报纸版的 SVG 会失去描边/金色，退化成默认黑色填充的大黑块。 */
+.art-block svg .ink, .np-fig svg .ink { stroke: var(--art-ink); fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.art-block svg .ink-fill, .np-fig svg .ink-fill { fill: var(--art-ink); stroke: none; }
+.art-block svg .gold, .np-fig svg .gold { fill: var(--art-gold); stroke: none; }
+.art-block svg .gold-line, .np-fig svg .gold-line { stroke: var(--art-gold); fill: none; stroke-width: 1.8; stroke-linecap: round; }
+.art-block svg .soft, .np-fig svg .soft { stroke: var(--art-ink); fill: none; stroke-width: 1; opacity: 0.45; }
 .art-cap {
   font-size: 10px; color: var(--muted); text-align: right;
   font-style: italic; letter-spacing: 0.05em;
@@ -876,6 +906,9 @@ mark.hl-note {
   font-variant-numeric: tabular-nums;
   font-size: 12px; color: var(--en-tag); cursor: help;
 }
+/* 计时/累计的图标由 CSS 给出（JS 只写时间文本），报纸模式下换成「已读 / 累计」 */
+.toolbar-timer::before { content: "⏱ "; }
+.toolbar-total::before { content: "📊 "; }
 /* Reading position bookmark */
 .reading-pos-marker {
   position: absolute; left: 0; right: 0;
@@ -1404,11 +1437,14 @@ button.tag-chip { cursor: pointer; }
 
 
 /* ===== Writing Workshop ===== */
-.writing-workshop { max-width: 680px; right: 20px; left: auto; width: 90vw; max-height: 80vh; display: flex; flex-direction: column; }
-.workshop-tabs { display: flex; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
-.workshop-tab { padding: 6px 14px; border: 1px solid var(--border); background: var(--panel-bg); border-radius: 6px; cursor: pointer; font-size: 13px; }
+.writing-workshop { width: min(92vw, 720px); max-height: 82vh; flex-direction: column; transform: translate(-50%, -50%); }
+.workshop-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.workshop-tab { padding: 6px 12px; border: 1px solid var(--border); background: var(--panel-bg); border-radius: 6px; cursor: pointer; font-size: 13px; white-space: nowrap; }
 .workshop-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .workshop-body { flex: 1; overflow-y: auto; padding: 12px; }
+.workshop-action-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.workshop-action-bar .primary { background: var(--accent); color: #fff; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.workshop-action-bar .primary:hover { opacity: 0.9; }
 .workshop-empty { text-align: center; padding: 40px 20px; color: var(--text-muted); font-size: 14px; line-height: 1.8; }
 .workshop-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 10px; background: var(--panel-bg); }
 .workshop-card-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; margin-bottom: 6px; }
@@ -1428,3 +1464,1255 @@ button.tag-chip { cursor: pointer; }
 .notes-editor-pane { flex: 1; display: flex; flex-direction: column; overflow-y: auto; }
 #note-history-panel .workshop-card { margin-bottom: 4px; }
 .workshop-source-tag { font-size:11px; background:var(--accent-bg); color:var(--accent); padding:2px 8px; border-radius:10px; }
+
+/* =====================================================================
+   报纸阅读页（对开双页 + 翻版）  —  实现见 src/js/10-newspaper.js
+   ---------------------------------------------------------------------
+   阅读模式默认就是这一版式：左页英文、右页中文对照，页内多栏，左右翻版。
+   功能 UI（工具栏 / 菜单 / 剪报本 / 导读 / 批注笔 / 检索）在 body.paper-open
+   下整体换成报纸调性，但 DOM 与既有 class、id 完全不变，功能逻辑零改动。
+   ===================================================================== */
+
+/* ---------- 报纸桌面与页面骨架 ---------- */
+/* ⚠ 报纸调色板必须挂在 body.paper-open 上，**不能只挂在 .paper-root 上**：
+   导读抽屉(.summary-col)、剪报本(.notes-section)、批注笔(.float-menu)、
+   检索浮窗(.search-panel) 这些都在 .paper-root **之外**。
+   只挂在 .paper-root 上它们取不到 --np-*，`background: var(--np-paper)` 就成了无效值 →
+   抽屉直接透明，正文从底下透出来（这就是「导读看着和报纸严重冲突」的根因之一）。
+   ⚠ 这里也**不声明 --np-font**：字号由 JS 写到 <html> 的内联样式上（A+/A− 要用它）；
+     一旦在 CSS 里给 body 或 .paper-root 声明了，就会在子树里盖掉内联值，A+/A− 点了没反应。 */
+/* 皮肤：**线报排版（Wire / Industrial）** —— 冷调纸面 + 信号蓝单一强调，
+   标题用窄体大写字距拉开，数字一律等宽（页码 / 计时 / 速览），边界全部是 1px 发线、无圆角。
+   字体走系统回退栈（Arial Narrow / Segoe UI / Consolas）—— 本项目是 file:// 离线自包含页面，
+   不引外部字体：@import 一个 web font 会在离线时卡住整张样式表。装了 IBM Plex 就自动用上。 */
+body.paper-open {
+  --np-desk: #dde2e8;
+  --np-paper: #fbfcfd; --np-ink: #0f151c; --np-rule: #c8d0da;
+  --np-muted: #64707e; --np-accent: #0b57d0;
+  --np-accent-soft: rgba(11,87,208,.10);
+  --np-sans: "IBM Plex Sans", "Segoe UI", system-ui, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --np-cond: "IBM Plex Sans Condensed", "Roboto Condensed", "Arial Narrow", "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --np-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, monospace;
+  /* 纸面模式下把上面那批别名接到线报调色板上，否则面板里的强调色会跟报纸皮肤打架 */
+  --accent: var(--np-accent);
+  --panel-bg: var(--np-paper);
+  --border: var(--np-rule);
+  --text-muted: var(--np-muted);
+}
+[data-theme="dark"] body.paper-open, [data-theme="blue-gold"] body.paper-open {
+  --np-desk: #0b0e12;
+  --np-paper: #141920; --np-ink: #e8edf3; --np-rule: #35404d;
+  --np-muted: #97a3b2; --np-accent: #6ea8ff;
+  --np-accent-soft: rgba(110,168,255,.14);
+}
+[data-theme="green"] body.paper-open {
+  --np-desk: #ccd7d3;
+  --np-paper: #f7fbf9; --np-ink: #0e1a16; --np-rule: #c0cfc9;
+  --np-muted: #5e6f69; --np-accent: #0b6b57;
+  --np-accent-soft: rgba(11,107,87,.10);
+}
+.paper-root {
+  position: fixed; inset: 0; z-index: 9000;
+  display: flex; flex-direction: column;
+  /* 线报的台面：一层极淡的方格网（制图台 / 校样台的感觉），不是木纹也不是渐变 */
+  background:
+    repeating-linear-gradient(0deg, rgba(127,140,155,.11) 0 1px, transparent 1px 30px),
+    repeating-linear-gradient(90deg, rgba(127,140,155,.08) 0 1px, transparent 1px 30px),
+    var(--np-desk);
+}
+body.paper-open { overflow: hidden; }
+body.paper-open .header,
+body.paper-open .main-wrap { visibility: hidden; }
+/* ⚠ 摘要是从 .main-wrap 里「抽出来」当左侧抽屉用的，但 visibility 会被子元素继承 ——
+   不显式恢复可见，抽屉虽然 position:fixed 也照样隐形（这就是「导读点了没反应」的原因）。
+   display 也要强制，否则 .main-wrap.no-summary .summary-col { display:none } 会再盖一层。 */
+body.paper-open .main-wrap .summary-col { visibility: visible; display: block !important; }
+
+/* ---------- 报眉：两行结构（刊号条 + 栏目索引栏） ---------- */
+/* 线报的报眉是「编辑部索引」的读法：
+   第一行 .np-mastbar = **反白刊号条**（深底浅字、等宽大写）：刊名 / 来源 / 版次 / 日期 / 时刻 / 计时
+   第二行 .np-indexbar = 浅底的栏目索引：四个下拉 + 语言切换 + 翻版 + 工具按钮
+   底栏 (.toolbar) 在报纸模式下整条不再显示；其中有用的部分由 10-newspaper.js 的
+   paperAdoptControls() 运行时搬进这里（DOM 与事件监听原样保留，退出时搬回）。 */
+.np-topbar {
+  flex: 0 0 auto; position: relative;
+  display: flex; flex-direction: column;
+  background: var(--np-paper); color: var(--np-ink);
+  border-bottom: 2px solid var(--np-ink);
+  font-family: var(--np-sans);
+}
+.np-mastbar {
+  display: flex; align-items: center; gap: 16px; padding: 7px 16px;
+  background: var(--np-ink); color: var(--np-paper);
+}
+.np-brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.np-brand-name {
+  font-family: var(--np-cond);
+  font-size: 19px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+  white-space: nowrap; line-height: 1.1;
+}
+.np-brand-sub {
+  font-family: var(--np-mono);
+  font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--np-ink); background: var(--np-paper); padding: 2px 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 20vw;
+}
+/* 出版信息条：等宽数字 + 字距放大 + 项间细竖线 —— 报纸刊号条的读法。
+   搬进来的可能是 .toolbar-clock-area 这一个包装，也可能是散着的三个时钟元素，
+   所以分隔线同时写在「直接子项之间」和「包装内部各项之间」。 */
+.np-dateline {
+  margin-left: auto; display: flex; align-items: center;
+  font-family: var(--np-mono);
+  font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--np-paper); white-space: nowrap;
+}
+.np-dl-ed {
+  border: 1px solid currentColor; padding: 1px 6px; margin-right: 12px;
+  font-size: 9.5px; letter-spacing: .18em;
+}
+.np-dl-date { padding-right: 12px; opacity: .82; }
+.np-timehost {
+  display: flex; align-items: center; gap: 12px;
+  border-left: 1px solid rgba(127,140,155,.5); padding-left: 12px;
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px; letter-spacing: .12em; opacity: .82;
+}
+.np-timehost:empty { display: none; }
+.np-timehost > * {
+  display: flex; align-items: center; gap: 12px; padding: 0; margin: 0;
+  font-size: 10.5px; letter-spacing: .12em; color: inherit;
+}
+.np-timehost > * + * { border-left: 1px solid rgba(127,140,155,.5); padding-left: 12px; }
+.np-timehost .toolbar-clock-area > * + * { border-left: 1px solid rgba(127,140,155,.5); padding-left: 12px; }
+body.paper-open .np-timehost #toolbar-clock { margin: 0; font-size: 10.5px; color: inherit; letter-spacing: .12em; }
+body.paper-open .np-timehost .toolbar-timer { font-size: 10.5px; color: inherit; letter-spacing: .12em; }
+body.paper-open .np-timehost .toolbar-total { display: inline; font-size: 10.5px; color: inherit; letter-spacing: .12em; }
+body.paper-open .np-timehost .toolbar-timer::before { content: "READ "; opacity: .6; }
+body.paper-open .np-timehost .toolbar-total::before { content: "TOTAL "; opacity: .6; }
+[data-theme] body.paper-open .np-timehost { color: inherit; }
+
+/* ---------- 栏目索引栏 ---------- */
+.np-indexbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 12px; border-top: 1px solid var(--np-rule);
+  background: var(--np-paper);
+}
+.np-menus { display: flex; align-items: center; gap: 0; flex: 0 1 auto; min-width: 0; }
+.np-menus:empty { display: none; }
+.np-indexbar .menu-trigger-wrap { position: relative; display: flex; align-items: stretch; }
+.np-indexbar .menu-trigger {
+  font-family: var(--np-cond); font-size: 12.5px; font-weight: 700;
+  letter-spacing: .14em; text-transform: uppercase;
+  padding: 5px 11px; border: none; border-right: 1px solid var(--np-rule); border-radius: 0;
+  background: transparent; color: var(--np-ink); cursor: pointer;
+}
+.np-indexbar .menu-trigger-wrap:first-child .menu-trigger { border-left: 1px solid var(--np-rule); }
+.np-indexbar .menu-trigger:hover { background: var(--np-accent-soft); color: var(--np-accent); }
+/* 下拉挂在各自的栏目按钮下方（搬进来后 .menu-trigger-wrap 就是定位参照） */
+.np-indexbar .menu-dropdown { top: calc(100% + 6px); left: 0; right: auto; }
+
+/* 语言切换：EN / 中文 —— 两份相互独立的报纸，这里是唯一入口。
+   当前语言反色（深底浅字），一眼看得出现在读的是哪一本，也符合可访问性（aria-pressed）。 */
+.np-langseg { display: flex; align-items: stretch; flex: 0 0 auto; border: 1px solid var(--np-ink); }
+.np-lang-btn {
+  appearance: none; font-family: var(--np-cond); cursor: pointer;
+  font-size: 12px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+  padding: 5px 13px; border: none; border-radius: 0;
+  background: transparent; color: var(--np-ink);
+  transition: background .15s, color .15s;
+}
+.np-lang-btn + .np-lang-btn { border-left: 1px solid var(--np-ink); }
+.np-lang-btn:hover:not(:disabled) { background: var(--np-accent-soft); color: var(--np-accent); }
+.np-lang-btn.active { background: var(--np-ink); color: var(--np-paper); }
+.np-lang-btn:disabled { opacity: .32; cursor: default; }
+
+.np-flip { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.np-pos {
+  min-width: 64px; text-align: center;
+  font-family: var(--np-mono); font-variant-numeric: tabular-nums;
+  letter-spacing: .1em; font-size: 12px;
+}
+.np-tools { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.np-btn {
+  appearance: none; font: inherit; font-family: var(--np-sans); font-size: 12.5px; line-height: 1;
+  padding: 6px 10px; border-radius: 0; cursor: pointer;
+  border: 1px solid var(--np-rule); background: transparent; color: var(--np-ink);
+  transition: background .15s, border-color .15s, color .15s;
+}
+.np-btn:hover:not(:disabled) { background: var(--np-accent-soft); border-color: var(--np-accent); color: var(--np-accent); }
+.np-btn:disabled { opacity: .35; cursor: default; }
+.np-btn.active { background: var(--np-accent); border-color: var(--np-accent); color: #fff; }
+.np-exit { border-color: var(--np-ink); }
+
+/* ---------- 版位 / 轨道 ---------- */
+/* 电脑视图：纸张铺满可用宽度（上限 1500px），桌面只留窄边 —— 
+   之前 max 1120px + 大边距会让整页看着像一块竖屏平板。 */
+.np-stage { flex: 1; min-height: 0; overflow: hidden; padding: 12px 16px 14px; box-sizing: border-box; }
+.np-track {
+  display: flex; height: 100%;
+  transition: transform .6s cubic-bezier(.22,.61,.36,1);
+  will-change: transform;
+}
+.np-page {
+  flex: 0 0 100%; width: 100%; height: 100%;
+  display: flex; justify-content: center;
+  padding: 0 6px; box-sizing: border-box;
+  perspective: 2200px;   /* 给纸面翻掀一个透视，见下方 npTurn* */
+}
+
+/* ---------- 翻报动画 ---------- */
+/* 只让轨道横向平移（translateX）看着是「切换」，不是「翻报纸」。
+   这里在平移之上再叠一层纸面翻掀：旧版绕右边折走、新版绕左边铺下来，
+   纸面同时扫过一道折痕阴影 —— 连续翻版就是「一页一页翻过去」的手感。
+   JS 在翻版时给出/进两张纸各加一个类（10-newspaper.js paperTurnFx）。 */
+.np-page.np-turn-out .np-leaf {
+  transform-origin: right center;
+  animation: npTurnOut .58s cubic-bezier(.3,.05,.2,1) both;
+}
+.np-page.np-turn-in .np-leaf {
+  transform-origin: left center;
+  animation: npTurnIn .58s cubic-bezier(.3,.05,.2,1) both;
+}
+@keyframes npTurnOut {
+  from { transform: rotateY(0deg) scale(1); opacity: 1; }
+  to   { transform: rotateY(14deg) scale(.982); opacity: .18; }
+}
+@keyframes npTurnIn {
+  from { transform: rotateY(-15deg) scale(.982); opacity: .18; }
+  to   { transform: rotateY(0deg) scale(1); opacity: 1; }
+}
+.np-page.np-turn-in .np-leaf::after,
+.np-page.np-turn-out .np-leaf::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 3;
+  background: linear-gradient(90deg, rgba(0,0,0,.24), rgba(0,0,0,0) 28%);
+  animation: npCrease .58s cubic-bezier(.3,.05,.2,1) both;
+}
+@keyframes npCrease { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .np-track { transition: none; }
+  .np-page.np-turn-in .np-leaf,
+  .np-page.np-turn-out .np-leaf { animation: none !important; }
+  .np-page.np-turn-in .np-leaf::after,
+  .np-page.np-turn-out .np-leaf::after { display: none; }
+}
+
+/* 每版是一张完整的纸（不再左右对开）—— 线报的纸：直角、1px 边、硬投影、无纹理 */
+.np-leaf {
+  position: relative;
+  width: min(1500px, 100%); height: 100%;
+  display: flex; flex-direction: column; min-width: 0;
+  background: var(--np-paper); color: var(--np-ink);
+  border: 1px solid var(--np-rule); border-radius: 0;
+  box-shadow: 7px 7px 0 rgba(15,21,28,.09), 0 18px 40px rgba(15,21,28,.16);
+  font-family: var(--np-sans);
+  font-size: var(--np-font); line-height: 1.62;
+  padding: 18px 30px 10px; box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* ---------- 报头 / 内页眉 ---------- */
+.np-masthead { border-bottom: 1px solid var(--np-ink); padding-bottom: 6px; margin-bottom: 9px; }
+.np-m-top {
+  display: flex; justify-content: space-between; gap: 8px; margin-bottom: 5px;
+  font-family: var(--np-mono); font-size: 9.5px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--np-muted);
+}
+.np-m-name {
+  margin: 0 0 5px; font-family: var(--np-cond);
+  font-size: 42px; line-height: .94; font-weight: 700; letter-spacing: .01em;
+  text-transform: uppercase;
+}
+.np-m-rule {
+  display: flex; justify-content: space-between; gap: 8px;
+  font-family: var(--np-mono); font-size: 9.5px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--np-muted);
+  border-top: 1px solid var(--np-rule); padding-top: 4px;
+}
+.np-runhead {
+  display: flex; align-items: center; gap: 9px;
+  font-family: var(--np-mono); font-size: 9.5px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--np-muted);
+  border-bottom: 1px solid var(--np-ink); padding-bottom: 5px; margin-bottom: 10px;
+}
+.np-run-name { letter-spacing: .16em; color: var(--np-ink); }
+.np-run-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.np-run-page { margin-left: auto; letter-spacing: .14em; font-variant-numeric: tabular-nums; }
+/* 栏头标签：与三栏视图的 EN / CN 标签同一套读法 */
+.np-tag {
+  font-family: var(--np-mono);
+  font-size: 9.5px; letter-spacing: .16em; font-weight: 700;
+  background: var(--np-ink); color: var(--np-paper); padding: 2px 6px; border-radius: 0;
+}
+.np-tag-en { background: var(--np-ink); color: var(--np-paper); }
+.np-tag-cn { background: var(--np-accent); color: #fff; }
+
+.np-headline {
+  margin: 3px 0 5px; font-family: var(--np-cond);
+  font-size: 31px; line-height: 1.04; font-weight: 700; letter-spacing: -.003em;
+}
+.np-subhead {
+  font-family: var(--np-sans); font-size: 13px; line-height: 1.45;
+  color: var(--np-muted); margin-bottom: 6px;
+}
+.np-byline {
+  font-family: var(--np-mono); font-size: 9.5px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--np-muted);
+  border-top: 1px solid var(--np-rule); padding-top: 4px;
+}
+
+/* 首页「题图区」：主标题在左、线稿插画在右 —— 报纸的经典头版处理方式。
+   放进网格里限死尺寸，就不会像以前那样把整页撑满。 */
+.np-lead { display: block; padding-bottom: 8px; }
+.np-lead.has-art { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 16px; align-items: start; }
+.np-lead-text { min-width: 0; }
+
+/* 本篇速览 / AT A GLANCE：线报的 FACT BOX —— 全等宽字体、上下发线 */
+.np-facts {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  border-top: 1px solid var(--np-ink); border-bottom: 1px solid var(--np-rule);
+  padding: 6px 0; margin-bottom: 11px;
+  font-family: var(--np-mono);
+}
+.np-facts-h {
+  font-size: 9.5px; letter-spacing: .2em; text-transform: uppercase;
+  color: var(--np-accent); font-weight: 700;
+}
+.np-facts-grid { display: flex; gap: 22px; flex-wrap: wrap; }
+.np-facts-grid > div { display: flex; align-items: baseline; gap: 4px; }
+.np-facts-grid b {
+  font-family: var(--np-mono); font-variant-numeric: tabular-nums;
+  font-size: 15px; font-weight: 700; letter-spacing: 0;
+}
+.np-facts-grid span { font-size: 9.5px; color: var(--np-muted); letter-spacing: .12em; text-transform: uppercase; }
+
+/* 精读提示框：挂在正文末尾，像报纸的「语言点」小栏目 */
+.np-digest {
+  break-inside: avoid; margin: .7em 0 1em; padding: 10px 12px;
+  border: 1px solid var(--np-rule); border-left: 3px solid var(--np-accent);
+  background: var(--np-accent-soft); border-radius: 0;
+}
+.np-digest-h {
+  font-family: var(--np-mono); font-size: .78em; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--np-accent); font-weight: 700; margin-bottom: 6px;
+}
+.np-digest-sec { margin-bottom: 8px; }
+.np-digest-sec:last-child { margin-bottom: 0; }
+.np-digest-t {
+  display: block; font-family: var(--np-mono); font-size: .7em; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--np-muted); margin-bottom: 3px;
+}
+.np-digest ol { margin: 0; padding-left: 1.4em; font-size: .82em; line-height: 1.6; }
+.np-digest ul { margin: 0; padding: 0; list-style: none; font-size: .82em; line-height: 1.6; }
+.np-digest ul li { display: flex; gap: 6px; }
+.np-digest b { flex: 0 0 6.4em; }
+.np-digest i { font-style: normal; color: var(--np-muted); }
+
+/* 生词 / 标注在报纸版里做成「荧光划线」——线报只用一个强调色，不做彩色标签 */
+body.paper-open .np-body mark.hl {
+  background: var(--np-accent-soft); color: inherit; border-radius: 0;
+  padding: 0 1px; box-shadow: inset 0 -2px 0 var(--np-accent);
+}
+body.paper-open .np-body mark.hl-unclear { background: rgba(120,120,200,.16); box-shadow: inset 0 -2px 0 #6a6ac0; }
+body.paper-open .np-body mark.hl-note { background: rgba(90,140,90,.18); box-shadow: inset 0 -2px 0 #4f7a4f; }
+
+/* ---------- 正文：页内多栏 ---------- */
+/* column-count 由 JS 按视口写入内联样式（窄屏 1 栏），这里给个默认值兜底，
+   避免 JS 未生效时退化成单栏。column-fill:auto = 先填满第一栏再进第二栏（报纸排法）。 */
+.np-body {
+  flex: 1; min-height: 0; overflow: hidden;
+  column-count: 2; column-gap: 40px; column-rule: 1px solid var(--np-rule);
+  column-fill: auto;
+  /* ⚠ .np-body 同时带 col-body 类，基础样式 `.col-body { padding: 4px 8px 80px }` 会继承过来。
+     那个 80px 底内边距在多栏容器里不是「留白」，而是**把每栏的高度砍掉 80px** ——
+     两栏就少掉 160px 容量（约占一版的 21%），分版结果必然大片空白。
+     报纸版的正文容器必须是零内边距。 */
+  padding: 0;
+}
+/* ---------- 正文段落：段号（行内上标）+ 段间分隔线 ---------- */
+/* 基础样式里 .col-body p 用的是「绝对定位的 ¶ + 编号 + 42px 左内边距」。
+   在双栏里那 42px 白白吃掉约 7% 栏宽，而且跨栏续段看不到编号。
+   报纸版改成：段号做成**行内上标**（每段开头必有、不占栏宽），
+   段与段之间加一条细分隔线（报纸的分段读法，也便于一眼看出段界）。
+   ⚠ 分隔线画在「后一段的开头」（border-top）而不是「前一段的结尾」（border-bottom）：
+     段落在多栏里会被拆开，画在结尾的话线会跟着最后一段残片跑到别的栏去，
+     和「新段落从哪里开始」的实际位置对不上。 */
+.np-body > p[data-para-idx] {
+  margin: 0; padding: 0;
+  text-align: justify; text-indent: 0;
+  hyphens: auto; -webkit-hyphens: auto; overflow-wrap: break-word;
+}
+.np-body > p[data-para-idx] + p[data-para-idx] {
+  margin-top: .55em; padding-top: .55em;
+  border-top: 1px solid var(--np-rule);
+}
+.np-body > p[data-para-idx]::before {
+  content: attr(data-para-num);
+  position: static; float: none; display: inline;
+  margin: 0 .44em 0 0; padding: 0;
+  font-family: var(--np-mono);
+  font-size: .7em; font-weight: 700; line-height: inherit;
+  vertical-align: .2em; letter-spacing: .06em;
+  color: var(--np-accent);
+}
+/* 基础样式那个绝对定位的编号（left:16px）在报纸版里去掉 */
+.np-body > p[data-para-idx]::after { content: none; }
+/* 中文版：是与英文版**平权的一份报纸**，不缩小字号、不做「对照」的从属处理；
+   用系统中文字体、更大的行高（方块字需要更多行间），段首缩进两字 —— 中文排版的规矩。
+   ⚠ 不做首字下沉：中文段落常以拉丁人名/缩写开头，::first-letter 会把首个字母吃掉
+   （实测把 "Andrew" 变成 "ndrew"）。 */
+.np-page-cn .np-body > p[data-para-idx] {
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", var(--np-sans);
+  font-size: 1em; line-height: 1.86;
+  text-indent: 2em;
+}
+/* 线报不设首字下沉（那是古典大报的笔法）；段号一律照常显示 */
+.np-page-en:not(.is-first) .np-body > p:first-child { text-indent: 0; }
+.np-quote {
+  margin: 0 0 .8em; padding: .5em .85em; border-radius: 0;
+  border-left: 3px solid var(--np-accent); background: var(--np-accent-soft);
+  font-style: normal;
+}
+.np-fig { margin: 0; text-align: center; break-inside: avoid; }
+.np-fig svg { display: block; width: 100%; max-width: 150px; height: auto; }
+
+.np-foot {
+  flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  margin-top: 7px; padding-top: 5px; border-top: 1px solid var(--np-ink);
+  font-family: var(--np-mono); font-size: 9.5px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--np-muted);
+}
+.np-pageno { letter-spacing: .16em; font-variant-numeric: tabular-nums; }
+
+/* 语言切换：不做重排、不刷新页面，只叠一次「换了一份报纸」的交叉淡入。
+   ⚠ 关键帧必须**从 opacity:0 起**：JS 是「加类 → 立刻跳到另一本的第 1 版」，
+     若从 1 起，第一帧就会被画出来，用户会看到旧版闪一下再淡出。 */
+@keyframes npLangSwap {
+  0%   { opacity: 0; transform: translateY(8px) scale(.996); }
+  100% { opacity: 1; transform: none; }
+}
+.paper-root.np-lang-swap .np-stage { animation: npLangSwap .4s cubic-bezier(.22,.61,.36,1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .paper-root.np-lang-swap .np-stage { animation: none; }
+}
+
+/* 分版不再用「隐藏探针量高 + 逐块累加」估算（那套会低估容量、留下大片空白），
+   改成「把剩余块全部放进本版 → 按 scrollWidth 真实溢出逐个回退」。见 10-newspaper.js paperPackFlow。 */
+
+/* 「标题区显隐」在报纸版里收起报头 + 主标题区（收起后正文可用高度变大，会重新分版） */
+body.paper-open .paper-root.no-head .np-masthead,
+body.paper-open .paper-root.no-head .np-lead { display: none; }
+
+.np-hint {
+  position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+  z-index: 5; font-family: var(--np-mono);
+  font-size: 10px; letter-spacing: .1em; color: var(--np-muted);
+  background: var(--np-paper); border: 1px solid var(--np-rule);
+  padding: 3px 12px; border-radius: 0; pointer-events: none;
+  animation: npHintOut 7s ease forwards;
+}
+body.paper-open .np-hint { bottom: 12px; }
+@keyframes npHintOut { 0%,72% { opacity: 1; } 100% { opacity: 0; } }
+
+/* 原列被报纸接管后清空，不占位 */
+.np-source { display: none !important; }
+
+/* =====================================================================
+   功能 UI 的报纸化改造（仅在 body.paper-open 下生效）
+   DOM 与 id/class 全部沿用，只换皮 —— 功能逻辑零改动
+   ===================================================================== */
+
+/* ---------- 底部工具栏 → 报纸模式下整条收起 ---------- */
+/* 报纸没有「底部工具条」这种东西。四个下拉菜单与时钟/计时已被搬进报眉的栏目索引栏
+   （见 10-newspaper.js 的 paperAdoptControls），所以底栏整条隐藏。
+   ⚠ 隐藏由 body.paper-controls-adopted 这个 JS 置的类控制 —— 万一搬移失败底栏仍然
+     可见可用，不会把入口弄丢。 */
+body.paper-controls-adopted .toolbar { display: none !important; }
+/* 报眉已经提供了「中文 / 导读 / 笔记」，底栏里这几个即使可见也不要重复 */
+body.paper-open .toolbar #toggle-summary-btn,
+body.paper-open .toolbar #toggle-cn-btn,
+body.paper-open .toolbar #open-vocab-btn,
+body.paper-open .toolbar #open-note-btn,
+body.paper-open .toolbar .toolbar-info { display: none !important; }
+
+/* 下拉菜单 → 报纸的「栏目」卡片 */
+body.paper-open .menu-dropdown {
+  background: var(--np-paper); color: var(--np-ink);
+  border: 1px solid var(--np-ink); border-radius: 0;
+  box-shadow: 6px 6px 0 rgba(15,21,28,.14);
+  font-family: var(--np-sans);
+}
+body.paper-open .menu-dropdown .menu-section-label {
+  color: var(--np-accent); letter-spacing: .16em; text-transform: uppercase;
+  border-bottom: 1px solid var(--np-rule);
+}
+body.paper-open .menu-dropdown button { border-radius: 0; color: var(--np-ink); }
+body.paper-open .menu-dropdown button:hover { background: rgba(127,127,127,.14); }
+body.paper-open .menu-dropdown button.active { background: var(--np-accent); color: #fff; }
+body.paper-open .menu-kbd { color: var(--np-muted); }
+
+/* ---------- 摘要列 → 报纸的「导读」栏（左侧抽屉） ---------- */
+/* 报纸的导读栏 = 竖排的条目提要：去掉卡片 / 圆角 / 白底 / 投影，
+   改成报纸的读法 —— 栏名走报头式双线，条目之间一条细分隔线，段号用套红。 */
+body.paper-open .summary-col {
+  position: fixed; top: 0; left: 0; bottom: 0; z-index: 9200;
+  width: min(400px, 90vw); padding: 0;
+  display: flex; flex-direction: column;
+  background: var(--np-paper); color: var(--np-ink);
+  border: none; border-radius: 0;
+  box-shadow: 10px 0 0 rgba(15,21,28,.10);
+  transform: translateX(-100%); transition: transform .28s ease;
+  overflow: hidden; font-family: var(--np-sans);
+}
+body.paper-open .summary-col.np-open { transform: none; }
+body.paper-open .summary-col .col-header {
+  flex: 0 0 auto; display: block;
+  padding: 14px 20px 9px; margin: 0;
+  border-bottom: 3px double var(--np-rule);
+  background: transparent;
+}
+body.paper-open .summary-col .col-header::before {
+  content: "GUIDE · 内容提要";
+  display: block; margin-bottom: 3px;
+  font-size: 9.5px; letter-spacing: .26em; color: var(--np-accent);
+}
+body.paper-open .summary-col .col-header .lang-tag { display: none; }
+body.paper-open .summary-col .col-header h1 {
+  margin: 0; font-family: inherit;
+  font-size: 21px; font-weight: 700; letter-spacing: .12em; line-height: 1.2;
+}
+body.paper-open .summary-col .col-body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 20px 30px; }
+body.paper-open .summary-col .para-summary-item {
+  margin: 0; padding: 10px 0 11px;
+  background: transparent; border: none; border-radius: 0;
+  border-bottom: 1px solid var(--np-rule);
+}
+body.paper-open .summary-col .para-summary-item:last-child { border-bottom: none; }
+body.paper-open .summary-col .para-summary-item .item-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 4px; font-family: inherit;
+  font-size: 10px; letter-spacing: .16em; color: var(--np-muted);
+}
+body.paper-open .summary-col .para-summary-item .item-head .num {
+  background: transparent; color: var(--np-accent); border-radius: 0;
+  padding: 0; font-size: 11px; font-weight: 700; letter-spacing: .12em;
+}
+body.paper-open .summary-col .jump-btn {
+  margin-left: auto; padding: 0 2px; border: none; background: transparent;
+  border-radius: 0; color: var(--np-muted); font-size: 12px; cursor: pointer;
+}
+body.paper-open .summary-col .jump-btn:hover { color: var(--np-accent); }
+body.paper-open .summary-col .en-sum { font-size: 12.5px; line-height: 1.62; }
+body.paper-open .summary-col .cn-sum { margin-top: 4px; font-size: 12px; line-height: 1.68; color: var(--np-muted); }
+body.paper-open .summary-col [contenteditable="true"] { border-bottom: none; outline-offset: 2px; }
+body.paper-open .summary-col [contenteditable="true"]:focus { background: rgba(201,162,39,.16); }
+
+/* ---------- 笔记区 → 报纸的「剪报本」（右侧抽屉） ---------- */
+/* ⚠ 基础样式里 .notes-section 有 max-height: 36vh（原始形态是页面底部的一条），
+   做成全高抽屉时它会把面板压成上三分之一 —— 必须显式解除。 */
+body.paper-open .notes-section {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 9200;
+  width: min(470px, 94vw); padding: 0;
+  display: flex; flex-direction: column;
+  max-height: none !important; height: auto;
+  background: var(--np-paper); color: var(--np-ink);
+  border: none; border-radius: 0;
+  box-shadow: -10px 0 0 rgba(15,21,28,.10);
+  font-family: var(--np-sans);
+  overflow: hidden;
+}
+body.paper-open .notes-section.collapsed { display: none !important; }
+body.paper-open .notes-section header {
+  /* 基础样式是横排（栏名 + 按钮同行），报纸版改成「栏名在上、操作条在下」的两段式 */
+  display: block; flex: 0 0 auto;
+  padding: 14px 18px 9px; margin: 0;
+  border-bottom: 3px double var(--np-rule); background: transparent;
+}
+body.paper-open .notes-section header h3 {
+  margin: 0; font-family: inherit;
+  font-size: 19px; font-weight: 700; letter-spacing: .12em; line-height: 1.25;
+}
+body.paper-open .notes-section header h3::before {
+  content: "CLIPPINGS · 剪报本";
+  display: block; margin-bottom: 3px;
+  font-size: 9.5px; font-weight: 400; letter-spacing: .26em; color: var(--np-accent);
+}
+body.paper-open .notes-section header .actions { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 0; }
+body.paper-open .notes-section header .actions button {
+  font-family: inherit; font-size: 11.5px; letter-spacing: .04em;
+  padding: 3px 8px; border: 1px solid var(--np-rule); border-radius: 1px;
+  background: transparent !important; color: var(--np-ink) !important;
+}
+body.paper-open .notes-section header .actions button:hover { background: rgba(127,127,127,.16) !important; border-color: var(--np-ink); }
+body.paper-open .notes-section .close-notes { border-color: var(--np-ink); }
+body.paper-open .notes-section .notes-list { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 18px 26px; }
+/* 页签 = 报纸的栏目切换：无边框，当前项用套红下划线 */
+body.paper-open .notes-section .notes-tabs {
+  display: flex; flex-wrap: wrap; gap: 0; margin: 0 0 10px; padding: 0;
+  border-bottom: 1px solid var(--np-rule); background: transparent;
+}
+body.paper-open .notes-section .notes-tabs button {
+  font-family: inherit; font-size: 11.5px; letter-spacing: .05em;
+  padding: 6px 9px; border: none; border-bottom: 2px solid transparent;
+  border-radius: 0; background: transparent; color: var(--np-muted);
+}
+body.paper-open .notes-section .notes-tabs button.active {
+  color: var(--np-ink); font-weight: 700; border-bottom-color: var(--np-accent);
+  background: transparent;
+}
+body.paper-open .notes-section .notes-jump-nav {
+  padding: 5px 0; margin-bottom: 8px; border-bottom: 1px solid var(--np-rule);
+  font-size: 11px; letter-spacing: .08em;
+}
+body.paper-open .notes-section .notes-jump-nav button {
+  font-family: inherit; font-size: 11px; border-radius: 1px;
+  border-color: var(--np-rule); color: var(--np-ink); background: transparent;
+}
+/* 条目 = 剪报：无卡片、无圆角，一条细线分隔 */
+body.paper-open .notes-section .note-card {
+  margin: 0; padding: 10px 0 11px;
+  background: transparent; border: none; border-radius: 0;
+  border-bottom: 1px solid var(--np-rule);
+  font-family: inherit; font-size: 12.5px; line-height: 1.62;
+}
+body.paper-open .notes-section .note-card .badge { border-radius: 1px; letter-spacing: .08em; }
+body.paper-open .notes-section .empty-hint {
+  padding: 26px 6px; font-family: inherit; font-size: 12.5px; line-height: 1.9;
+  color: var(--np-muted);
+}
+body.paper-open .notes-section .workshop-card,
+body.paper-open .notes-section .compose-card {
+  background: transparent; border: none; border-bottom: 1px solid var(--np-rule);
+  border-radius: 0; padding: 10px 0;
+}
+
+/* ---------- 浮动批注笔 → 报纸的「红笔」小菜单 ---------- */
+body.paper-open .float-menu {
+  background: var(--np-paper); border: 1px solid var(--np-ink); border-radius: 2px;
+  box-shadow: 0 8px 22px rgba(0,0,0,.3); padding: 3px;
+}
+body.paper-open .float-menu button {
+  border-radius: 2px; color: var(--np-ink); font-size: 15px;
+  border-right: 1px solid var(--np-rule);
+}
+body.paper-open .float-menu button:hover { background: var(--np-accent); color: var(--np-paper); }
+
+/* ---------- 全文检索 → 报纸的「检索」浮窗 ---------- */
+body.paper-open .search-panel {
+  background: var(--np-paper); border: 1px solid var(--np-ink); border-radius: 0;
+  box-shadow: 6px 6px 0 rgba(15,21,28,.14);
+  font-family: var(--np-mono); color: var(--np-ink);
+}
+body.paper-open .search-panel input { border-radius: 0; border-color: var(--np-rule); }
+body.paper-open .search-opt { border-radius: 0; border-color: var(--np-rule); color: var(--np-ink); }
+body.paper-open .search-opt.active { background: var(--np-accent); border-color: var(--np-accent); color: #fff; }
+
+/* ---------- 其它浮层（统计 / 关联 / 快捷键 / 备份）统一纸面调性 ---------- */
+body.paper-open .stats-panel,
+body.paper-open .crossref-panel,
+body.paper-open .shortcuts-box,
+body.paper-open .backup-box,
+body.paper-open .diag-box {
+  background: var(--np-paper); color: var(--np-ink); border-radius: 0;
+  border: 1px solid var(--np-rule);
+  font-family: var(--np-sans);
+}
+body.paper-open .backup-overlay,
+body.paper-open .shortcuts-overlay,
+body.paper-open .diag-overlay { background: rgba(20,19,16,.6); }
+
+/* ---------- 阅读位置书签 ---------- */
+body.paper-open .bookmark-pill {
+  bottom: 14px; background: var(--np-paper); color: var(--np-ink);
+  border: 1px solid var(--np-ink); border-radius: 0;
+  box-shadow: 4px 4px 0 rgba(15,21,28,.12);
+}
+
+/* ---------- 移动端 ---------- */
+@media (max-width: 900px) {
+  .np-mastbar { flex-wrap: wrap; gap: 4px 10px; padding: 6px 10px; }
+  .np-dateline { margin-left: 0; }
+  .np-indexbar { flex-wrap: wrap; gap: 6px; padding: 5px 8px; }
+  .np-menus { flex: 1 1 100%; }
+  .np-menus .menu-trigger { border-left: 1px solid var(--np-rule); }
+  .np-brand-name { font-size: 16px; letter-spacing: .1em; }
+  .np-brand-sub { max-width: 40vw; }
+  .np-stage { padding: 8px 6px 12px; }
+  .np-leaf { padding: 13px 15px 8px; }
+  .np-m-name { font-size: 28px; }
+  .np-headline { font-size: 22px; }
+  .np-subhead { font-size: 12.5px; }
+  .np-btn { padding: 5px 8px; font-size: 12px; }
+  .np-lang-btn { padding: 5px 10px; }
+  body.paper-open .summary-col { width: min(340px, 92vw); }
+  body.paper-open .notes-section { width: min(360px, 94vw); }
+}
+@media (max-width: 620px) {
+  .np-m-top, .np-m-rule, .np-runhead, .np-foot { font-size: 9px; letter-spacing: .06em; }
+  .np-pos { min-width: 46px; font-size: 12px; }
+}
+/* 报纸模式下隐藏原来的移动端列切换条（改用报眉的「中文 / 导读」按钮） */
+body.paper-open .mobile-col-bar { display: none; }
+
+/* ---------- 打印：输出成一份真正的报纸 ---------- */
+@media print {
+  body.paper-open .paper-root { position: static; display: block; background: #fff; }
+  body.paper-open .np-topbar, body.paper-open .np-hint,
+  body.paper-open .toolbar, body.paper-open .notes-section,
+  body.paper-open .summary-col, body.paper-open .float-menu { display: none !important; }
+  body.paper-open .np-stage { padding: 0; overflow: visible; }
+  body.paper-open .np-track { display: block; height: auto; transform: none !important; }
+  body.paper-open .np-page { display: block; height: auto; page-break-after: always; }
+  body.paper-open .np-leaf { border: 1px solid #ccc; }
+  body.paper-open .np-leaf { box-shadow: none; height: auto; }
+  body.paper-open .np-body { height: auto; overflow: visible; }
+}
+
+/* =====================================================================
+   考试模式总览（5 个相互独立的模块）  —  见 src/js/10-toolbar.js
+   封套取考研试卷的纸面调性；每张卡片独立进入，互不依赖。
+   ===================================================================== */
+.exam-hub {
+  position: fixed; inset: 0; z-index: 9500;
+  background: rgba(20,19,16,.62);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.eh-box {
+  --eh-paper: #fffdf7; --eh-ink: #1b1a17; --eh-rule: #c9c3b4;
+  --eh-muted: #6d675b; --eh-accent: #8c1c13;
+  width: min(780px, 96vw); max-height: 92vh; overflow-y: auto;
+  background: var(--eh-paper); color: var(--eh-ink);
+  border: 1px solid var(--eh-rule); border-radius: 3px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.45);
+  font-family: "Times New Roman", Times, "Songti SC", "SimSun", serif;
+  padding: 22px 26px 16px;
+}
+[data-theme="dark"] .eh-box, [data-theme="blue-gold"] .eh-box {
+  --eh-paper: #1c1b17; --eh-ink: #e8e3d7; --eh-rule: #3a3730; --eh-muted: #9c9484; --eh-accent: #d9736a;
+}
+.eh-head { text-align: center; border-bottom: 3px double var(--eh-rule); padding-bottom: 10px; margin-bottom: 16px; }
+.eh-secret { text-align: right; font-size: 11px; letter-spacing: .2em; color: var(--eh-muted); }
+.eh-head h3 { margin: 2px 0 3px; font-size: 21px; font-weight: 700; letter-spacing: .32em; text-indent: .32em; }
+.eh-sub { font-size: 12.5px; letter-spacing: .09em; color: var(--eh-muted); }
+.eh-src { font-size: 11.5px; color: var(--eh-muted); margin-top: 5px; font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eh-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(205px, 1fr)); gap: 10px; }
+.eh-card {
+  appearance: none; text-align: left; cursor: pointer; font: inherit; color: inherit;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 13px 14px; background: transparent;
+  border: 1px solid var(--eh-rule); border-radius: 2px;
+  transition: border-color .15s, background .15s;
+}
+.eh-card:hover:not(:disabled) { border-color: var(--eh-accent); background: rgba(140,28,19,.055); }
+.eh-card.is-off { opacity: .42; cursor: default; }
+.eh-icon { font-size: 20px; line-height: 1.15; }
+.eh-name { font-size: 16px; font-weight: 700; letter-spacing: .04em; }
+.eh-en { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--eh-muted); }
+.eh-desc { font-size: 12px; line-height: 1.55; color: var(--eh-muted); margin-top: 3px; }
+.eh-state { margin-top: 8px; font-size: 11.5px; letter-spacing: .08em; color: var(--eh-accent); }
+.eh-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--eh-rule);
+  font-size: 11.5px; color: var(--eh-muted);
+}
+.eh-close {
+  appearance: none; font: inherit; font-size: 12.5px; padding: 6px 14px;
+  border: 1px solid var(--eh-ink); border-radius: 2px;
+  background: transparent; color: inherit; cursor: pointer;
+}
+.eh-close:hover { background: var(--eh-ink); color: var(--eh-paper); }
+.menu-note { padding: 6px 12px; font-size: 12px; color: var(--muted); }
+@media (max-width: 620px) {
+  .eh-grid { grid-template-columns: 1fr; }
+  .eh-box { padding: 16px 14px 12px; }
+  .eh-head h3 { font-size: 17px; letter-spacing: .2em; }
+}
+@media print { .exam-hub { display: none !important; } }
+
+/* =====================================================================
+   精读分析台（11-insights.js）
+   错题本 / 六题型能力雷达 / 段落功能标签 / 生词网络
+   ===================================================================== */
+.insight-panel { width: 660px; }
+.insight-body { padding: 14px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+
+/* ---------- 通用小件 ---------- */
+.ins-kpi { display: flex; gap: 8px; flex-wrap: wrap; }
+.ins-kpi-item {
+  flex: 1 1 96px; min-width: 88px; padding: 8px 10px; border-radius: 8px;
+  background: var(--summary-bg); border: 1px solid var(--rule); text-align: center;
+}
+.ins-kpi-item b { display: block; font-size: 20px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.ins-kpi-item span { font-size: 11px; color: var(--muted); }
+.ins-kpi-item.hot b { color: #d9480f; }
+.ins-filters { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.ins-filters select {
+  font: inherit; font-size: 12px; padding: 3px 6px; border-radius: 6px;
+  border: 1px solid var(--rule); background: var(--toolbar-bg); color: var(--fg);
+}
+.ins-chip {
+  font: inherit; font-size: 11.5px; line-height: 1; padding: 4px 9px; border-radius: 999px;
+  border: 1px solid var(--rule); background: transparent; color: var(--muted); cursor: pointer;
+}
+.ins-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ins-chip.jump { text-align: left; }
+.ins-chip.jump:hover { border-color: var(--accent); color: var(--accent); }
+.ins-chip.legend { cursor: default; }
+.ins-btn {
+  font: inherit; font-size: 12px; line-height: 1; padding: 5px 11px; border-radius: 6px;
+  border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; text-decoration: none;
+}
+.ins-btn.ghost { background: transparent; color: var(--fg); border-color: var(--rule); }
+.ins-btn.ghost:hover { border-color: var(--accent); color: var(--accent); }
+.ins-section { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .04em; margin-top: 2px; }
+.ins-dim { font-size: 11.5px; color: var(--muted); line-height: 1.55; }
+.ins-empty { padding: 24px 12px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.ins-search input {
+  width: 100%; font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 8px;
+  border: 1px solid var(--rule); background: var(--toolbar-bg); color: var(--fg);
+}
+.ins-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.ins-table th, .ins-table td { padding: 5px 8px; border-bottom: 1px solid var(--rule); text-align: left; }
+.ins-table th { font-weight: 600; color: var(--muted); font-size: 11.5px; }
+.ins-table td:nth-child(2), .ins-table td:nth-child(3) { font-variant-numeric: tabular-nums; }
+.ins-table tr.weak td { color: #d9480f; }
+
+/* ---------- 列表 ---------- */
+.ins-list { display: flex; flex-direction: column; gap: 8px; }
+.ins-row {
+  display: flex; gap: 10px; align-items: flex-start; padding: 9px 11px;
+  border: 1px solid var(--rule); border-radius: 8px; background: var(--summary-bg);
+}
+.ins-row.focus { border-color: var(--accent); }
+.ins-row-main { flex: 1 1 auto; min-width: 0; }
+.ins-row-title { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ins-row-sub { font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
+.ins-row-stem { font-size: 12.5px; margin-top: 4px; line-height: 1.5; }
+.ins-row-act { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
+.ins-row-act select {
+  font: inherit; font-size: 12px; padding: 3px 5px; border-radius: 6px;
+  border: 1px solid var(--rule); background: var(--toolbar-bg); color: var(--fg);
+}
+.ins-tag {
+  font-size: 10.5px; line-height: 1; padding: 3px 7px; border-radius: 999px;
+  border: 1px solid var(--rule); color: var(--muted); white-space: nowrap;
+}
+.ins-tag.type { border-color: var(--accent); color: var(--accent); }
+.ins-tag.cause { border-color: #d9480f; color: #d9480f; }
+.ins-tag.due { background: #d9480f; border-color: #d9480f; color: #fff; }
+.ins-tag.ok { border-color: #2e9e6b; color: #2e9e6b; }
+.ins-word { font-family: ui-monospace, Consolas, monospace; font-size: 13.5px; }
+.ins-occ { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+
+/* ---------- 错题重做 ---------- */
+.ins-redo { display: flex; flex-direction: column; gap: 10px; }
+.ins-redo-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.ins-redo-stem {
+  padding: 10px 12px; border-radius: 8px; background: var(--summary-bg);
+  border: 1px solid var(--rule); font-size: 13.5px; line-height: 1.7;
+}
+.ins-redo-opts { display: flex; flex-direction: column; gap: 6px; }
+.ins-opt {
+  font: inherit; font-size: 13px; text-align: left; padding: 8px 11px; border-radius: 8px;
+  border: 1px solid var(--rule); background: transparent; color: var(--fg); cursor: pointer; line-height: 1.5;
+}
+.ins-opt b { margin-right: 7px; color: var(--accent); }
+.ins-opt:hover { border-color: var(--accent); background: var(--accent-bg); }
+.ins-actions { display: flex; gap: 8px; }
+
+/* ---------- 能力雷达 ---------- */
+.ins-radar-wrap { display: flex; justify-content: center; padding: 4px 0 8px; color: var(--muted); }
+.ins-radar { max-width: 320px; }
+
+/* ---------- 段落功能标签 ---------- */
+/* 标签用「空 span + CSS content」渲染：textContent 为空 ——
+   导出 Markdown / 复制正文 / 词频统计都不会把「论点」当成正文混进去。 */
+.col-body p[data-para-func] { position: relative; }
+.pfunc-chip {
+  float: right; margin: 2px 0 0 8px; padding: 1px 6px;
+  font-size: 10px; line-height: 1.5; font-weight: 600; letter-spacing: .02em;
+  border-radius: 3px; border: 1px solid currentColor; cursor: pointer;
+  user-select: none; -webkit-user-select: none;
+}
+.pfunc-chip::before { content: attr(data-pfunc); }
+.col-body p[data-para-func] { border-left: 3px solid currentColor; padding-left: .5em; }
+/* 六种功能各一色（浅底 + 同色字，四个主题下都能读） */
+[data-para-func="argument"]   { color: #2f6fd0; }
+[data-para-func="evidence"]   { color: #2e9e6b; }
+[data-para-func="transition"] { color: #d98014; }
+[data-para-func="conclusion"] { color: #8b5cf6; }
+[data-para-func="background"] { color: #6b7280; }
+[data-para-func="example"]    { color: #d4537e; }
+.pfunc-chip.legend-argument, .ins-chip.legend.f-argument { color: #2f6fd0; }
+.ins-chip.legend.f-evidence { color: #2e9e6b; }
+.ins-chip.legend.f-transition { color: #d98014; }
+.ins-chip.legend.f-conclusion { color: #8b5cf6; }
+.ins-chip.legend.f-background { color: #6b7280; }
+.ins-chip.legend.f-example { color: #d4537e; }
+/* 报纸版里左侧色条用 inset 阴影画：报纸正文是多栏容器，border-left 会占栏宽 */
+body.paper-open .np-body p[data-para-func] {
+  border-left: none; padding-left: 0;
+  box-shadow: inset 3px 0 0 currentColor;
+}
+body.paper-open .pfunc-chip { margin-top: 1px; }
+
+/* ---------- 跳段高亮（生词网络 / 素材来源 跳转过来时闪一下）---------- */
+.col-body p.para-flash {
+  animation: paraFlash 2.6s ease-out 1;
+  border-radius: 4px;
+}
+@keyframes paraFlash {
+  0%   { background: rgba(212, 90, 48, .28); }
+  70%  { background: rgba(212, 90, 48, .18); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .col-body p.para-flash { animation: none; } }
+
+/* ---------- 写作工坊的来源标签 ---------- */
+.ws-src {
+  font: inherit; font-size: 11px; line-height: 1; padding: 3px 8px; border-radius: 999px;
+  border: 1px solid var(--rule); background: transparent; color: var(--muted); cursor: pointer;
+}
+.ws-src:hover { border-color: var(--accent); color: var(--accent); }
+.workshop-src-row { margin-bottom: 5px; }
+
+/* ---------- 报纸模式下这些面板也统一成纸面调性 ---------- */
+/* ⚠ .syntax-panel 一直在报纸模式（默认视图）下沿用应用的浅色/深色皮肤，
+   和纸面明显不是一套东西 —— 这里一并收进来。 */
+body.paper-open .insight-panel,
+body.paper-open .syntax-panel {
+  background: var(--np-paper); color: var(--np-ink);
+  border: 1px solid var(--np-ink); border-radius: 0;
+  font-family: var(--np-sans);
+}
+body.paper-open .insight-panel .syntax-header,
+body.paper-open .syntax-panel .syntax-header { border-bottom: 2px solid var(--np-ink); }
+body.paper-open .insight-panel .syntax-header h3,
+body.paper-open .syntax-panel .syntax-header h3 { font-family: var(--np-cond); letter-spacing: .1em; text-transform: uppercase; }
+body.paper-open .insight-panel .syntax-actions,
+body.paper-open .syntax-panel .syntax-actions { border-top: 1px solid var(--np-rule); }
+body.paper-open .ins-kpi-item,
+body.paper-open .ins-row,
+body.paper-open .ins-redo-stem { background: var(--np-accent-soft); border-color: var(--np-rule); }
+body.paper-open .ins-chip,
+body.paper-open .ins-btn.ghost,
+body.paper-open .ws-src,
+body.paper-open .ins-tag { border-color: var(--np-rule); color: var(--np-muted); }
+body.paper-open .ins-chip.active { background: var(--np-ink); border-color: var(--np-ink); color: var(--np-paper); }
+body.paper-open .ins-btn { background: var(--np-accent); border-color: var(--np-accent); color: #fff; }
+/* ⚠ 上面这条会把「次级按钮」也刷成实心强调色：而 .ins-btn.ghost 同时被
+   `body.paper-open .ins-chip, .ins-btn.ghost, … { color: var(--np-muted) }` 改成灰字，
+   于是灰字压蓝底 → 按钮上的字看不见（默写面板的「看原文 / 跳过 / 上一句」曾经就是空白的）。
+   ghost 的语义是「描边按钮」，这里把它显式还原。 */
+body.paper-open .ins-btn.ghost { background: transparent; border-color: var(--np-rule); color: var(--np-ink); }
+body.paper-open .ins-btn.ghost:hover { border-color: var(--np-accent); color: var(--np-accent); }
+body.paper-open .ins-search input,
+body.paper-open .ins-filters select,
+body.paper-open .ins-row-act select {
+  background: var(--np-paper); color: var(--np-ink); border-color: var(--np-rule);
+}
+body.paper-open .ins-radar-wrap { color: var(--np-ink); }
+body.paper-open .ins-row-sub,
+body.paper-open .ins-dim,
+body.paper-open .ins-empty,
+body.paper-open .ins-section { color: var(--np-muted); }
+body.paper-open .ins-table th, body.paper-open .ins-table td { border-bottom-color: var(--np-rule); }
+body.paper-open .ins-tag.due { color: #fff; }
+body.paper-open .ins-tag.type { border-color: var(--np-accent); color: var(--np-accent); }
+body.paper-open .ins-kpi-item.hot b { color: var(--np-accent); }
+
+@media (max-width: 720px) {
+  .insight-panel { width: 94vw; }
+  .ins-kpi-item { flex: 1 1 40%; }
+  .ins-row { flex-direction: column; }
+  .ins-row-act { width: 100%; flex-wrap: wrap; }
+}
+
+/* =====================================================================
+   写作工坊 · 大作文 / 小作文 / 模板导入（F05 / F06 / F17，见 src/js/06-exam.js）
+   ---------------------------------------------------------------------
+   模板内容靠导入，这里只管把「槽位 → 套话 → 草稿 → 自评」这条动线画清楚。
+   ⚠ 这些面板都是 .syntax-panel / .insight-panel，报纸模式下的层级由文件末尾统一抬，
+     不需要在这里再写一遍 z-index。
+   ===================================================================== */
+/* ---------- 「全部」总览 ---------- */
+.ws-ov-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 8px; }
+.ws-ov-card {
+  appearance: none; font: inherit; text-align: left; cursor: pointer; color: inherit;
+  display: flex; flex-direction: column; gap: 1px; padding: 10px 12px;
+  border: 1px solid var(--rule); border-radius: 8px; background: var(--summary-bg);
+}
+.ws-ov-card:hover { border-color: var(--accent); }
+.ws-ov-ico { font-size: 17px; }
+.ws-ov-num { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.ws-ov-name { font-size: 13px; font-weight: 600; }
+.ws-ov-hint { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+
+/* ---------- 大 / 小作文 ---------- */
+.ws-essay-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.ws-essay-bar .primary {
+  background: var(--accent); color: #fff; border: none;
+  padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-family: inherit;
+}
+.ws-essay-bar select {
+  font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 6px;
+  border: 1px solid var(--rule); background: var(--toolbar-bg); color: var(--fg); max-width: 300px;
+}
+.ws-small-picker { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+.ws-type {
+  font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--rule); background: transparent; color: var(--muted); cursor: pointer;
+}
+.ws-type.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ws-tpl-tip {
+  font-size: 12px; color: var(--muted); line-height: 1.6;
+  padding: 6px 9px; border-left: 2px solid var(--rule); background: var(--summary-bg);
+}
+.ws-say-list { display: flex; flex-direction: column; gap: 3px; margin: 6px 0; }
+.ws-say {
+  font: inherit; font-size: 12px; text-align: left; cursor: pointer; color: inherit;
+  padding: 4px 8px; border: 1px dashed var(--rule); border-radius: 6px; background: transparent;
+}
+.ws-say:hover { border-style: solid; border-color: var(--accent); color: var(--accent); }
+.ws-samples { margin: 8px 0; font-size: 12.5px; }
+.ws-samples summary { cursor: pointer; color: var(--muted); }
+.ws-sample { padding: 6px 0; border-bottom: 1px solid var(--rule); line-height: 1.65; }
+.ws-json {
+  max-height: 260px; overflow: auto; font-size: 11.5px; line-height: 1.6;
+  background: var(--summary-bg); border: 1px solid var(--rule); border-radius: 6px; padding: 8px;
+}
+.ws-slot-nav { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11.5px; color: var(--muted); margin: 6px 0 10px; }
+.ws-slot-nav-item { border: 1px solid var(--rule); border-radius: 999px; padding: 3px 9px; }
+.ws-slot { border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: var(--summary-bg); }
+.ws-slot-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.ws-slot-input {
+  width: 100%; font: inherit; font-size: 14px; line-height: 1.7; resize: vertical;
+  padding: 8px; border: 1px solid var(--rule); border-radius: 6px;
+  background: var(--panel-bg); color: var(--fg);
+}
+.ws-slot-tools { display: flex; gap: 8px; align-items: center; margin-top: 5px; flex-wrap: wrap; }
+.ws-draft-head { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.ws-draft-head input {
+  font: inherit; font-size: 14px; padding: 5px 8px; border: 1px solid var(--rule);
+  border-radius: 6px; background: var(--panel-bg); color: var(--fg);
+}
+.ws-draft-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+
+/* ---------- 素材插入浮板 ---------- */
+.ws-mat-pick {
+  display: flex; flex-direction: column; gap: 4px; margin-top: 6px; padding: 8px;
+  border: 1px solid var(--accent); border-radius: 8px; background: var(--panel-bg); max-height: 220px; overflow-y: auto;
+}
+.ws-mat-item {
+  font: inherit; font-size: 12px; text-align: left; cursor: pointer; color: inherit;
+  padding: 5px 8px; border: 1px solid var(--rule); border-radius: 6px; background: transparent;
+}
+.ws-mat-item:hover { border-color: var(--accent); }
+
+/* ---------- F17 自评清单 ---------- */
+.ws-check { border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; margin-top: 10px; }
+.ws-check-head { font-size: 12.5px; font-weight: 600; margin-bottom: 6px; }
+.ws-check-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.ws-check-label { flex: 0 0 84px; font-size: 12.5px; }
+.ws-check-stars { display: flex; gap: 3px; }
+.ws-star {
+  font: inherit; font-size: 11.5px; width: 26px; height: 24px; cursor: pointer;
+  border: 1px solid var(--rule); border-radius: 5px; background: transparent; color: var(--muted);
+}
+.ws-star.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ---------- 模板导入 ---------- */
+.ws-tpl-stat { font-size: 12.5px; color: var(--muted); margin: 6px 0 10px; line-height: 1.7; }
+.ws-import-box { border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; background: var(--summary-bg); }
+.ws-import-box textarea {
+  width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.6;
+  padding: 8px; border: 1px solid var(--rule); border-radius: 6px;
+  background: var(--panel-bg); color: var(--fg); resize: vertical;
+}
+.ws-import-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.ws-import-actions .primary {
+  background: var(--accent); color: #fff; border: none;
+  padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-family: inherit;
+}
+.ws-import-msg { font-size: 12.5px; line-height: 1.7; margin-top: 8px; }
+.ws-import-msg.ok { color: #2f855a; }
+.ws-import-msg.bad { color: #c53030; }
+@media (max-width: 620px) {
+  .ws-draft-head { flex-wrap: wrap; }
+  .ws-check-label { flex-basis: 68px; }
+}
+
+/* =====================================================================
+   F11 中译英默写（见 src/js/12-dictation.js）
+   ---------------------------------------------------------------------
+   逐词比对结果用「颜色 + 下划线 + 删除线」三套冗余编码：
+   只靠颜色的话，色盲用户和我们自己的暗色主题都会看不清。
+   ===================================================================== */
+.dt-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.dt-cn {
+  font-size: 16px; line-height: 1.85; padding: 12px 14px; border-radius: 8px;
+  background: var(--summary-bg); border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+}
+.dt-hint { margin: 6px 0; }
+.dt-input {
+  width: 100%; font: inherit; font-size: 14px; line-height: 1.8; resize: vertical;
+  padding: 9px 10px; border: 1px solid var(--rule); border-radius: 6px;
+  background: var(--panel-bg); color: var(--fg); margin-bottom: 8px;
+}
+.dt-verdict { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 6px; }
+.dt-line { display: flex; gap: 10px; align-items: flex-start; margin: 5px 0; }
+.dt-label { flex: 0 0 52px; font-size: 11.5px; color: var(--muted); padding-top: 3px; }
+.dt-tokens { flex: 1 1 auto; font-size: 14px; line-height: 2; word-break: break-word; }
+.dt-tok { padding: 1px 3px; border-radius: 4px; }
+.dt-correct { color: inherit; }
+.dt-wrong { color: #c53030; background: rgba(197,48,48,.12); text-decoration: line-through; }
+.dt-missing { color: #b7791f; background: rgba(183,121,31,.14); text-decoration: underline wavy; }
+.dt-extra { color: var(--muted); text-decoration: line-through; opacity: .8; }
+.dt-wrong-list { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0 6px; }
+.dt-wrong { margin-top: 8px; font-size: 12.5px; }
+[data-theme="dark"] .dt-wrong, [data-theme="blue-gold"] .dt-wrong { color: #fc8181; }
+[data-theme="dark"] .dt-missing, [data-theme="blue-gold"] .dt-missing { color: #f6e05e; }
+/* 报纸模式：套用线报的墨色与强调色 */
+body.paper-open .dt-cn { background: var(--np-accent-soft); border-color: var(--np-rule); border-left-color: var(--np-accent); color: var(--np-ink); }
+body.paper-open .dt-wrong { color: var(--np-accent); background: transparent; }
+body.paper-open .dt-missing { color: var(--np-ink); background: transparent; }
+body.paper-open .dt-input { border-color: var(--np-rule); background: transparent; color: var(--np-ink); }
+
+/* =====================================================================
+   F01 原文可视化标注（派生层）+ F16 理解偏差
+   ---------------------------------------------------------------------
+   既有 mark.hl-* 只覆盖 annotations（生词/笔记/题型）。这里补两类：
+     · .hl-misread   理解偏差（F16）—— 也是 annotations，只是新 bucket
+     · .hl-derived   长难句 / 写作素材（F01）—— 从 syntax:<篇> 与素材库回填到正文
+   ⚠ 派生层用「下划线 + 虚线」而不是整块底色：它经常与生词 mark 相邻，
+     整块底色会让段落看起来像花屏。
+   ===================================================================== */
+mark.hl-misread {
+  background: rgba(128,90,213,.14); color: inherit;
+  border-bottom: 1.5px dashed #805ad5;
+}
+.note-card .badge-misread { background: #ede7f6; color: #553c9a; }
+[data-theme="dark"], [data-theme="green"] mark.hl-misread { background: #3c2a63; color: #e9d8fd; border-bottom-color: #b794f4; }
+[data-theme="dark"], [data-theme="green"] .note-card .badge-misread { background: #44337a; color: #e9d8fd; }
+@media print { mark.hl-misread { border-bottom: 1px dashed #805ad5; background: none; } }
+
+mark.hl-derived {
+  background: none; color: inherit; padding: 0;
+  border-bottom: 1.5px solid #3182ce; cursor: pointer;
+}
+mark.hl-derived.hl-material {
+  border-bottom-color: #38a169;
+  background: rgba(56,161,105,.13);
+}
+mark.hl-derived:hover { background: rgba(49,130,206,.16); }
+body.paper-open .np-body mark.hl-derived {
+  border-bottom: 1px solid var(--np-accent); background: none;
+  box-shadow: inset 0 -3px 0 var(--np-accent-soft, rgba(11,87,208,.10));
+}
+body.paper-open .np-body mark.hl-derived.hl-material { border-bottom-style: dashed; }
+@media print { mark.hl-derived { background: none !important; border-bottom: 1px solid #666; } }
+
+/* =====================================================================
+   F14 素材聚类 / F08 同义替换 / F15 笔记历史 Delta  ——  见 src/js/06-exam.js
+   ===================================================================== */
+.ws-cluster { margin: 6px 0; border: 1px solid var(--rule); border-radius: 8px; padding: 6px 10px; background: var(--summary-bg); }
+.ws-cluster > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.ws-cluster-n { margin-left: 6px; font-size: 11.5px; font-weight: 400; color: var(--muted); }
+.ws-cluster .workshop-card { background: var(--panel-bg); }
+.ws-mat-topic { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.ws-mat-topic input {
+  flex: 1 1 auto; font: inherit; font-size: 12px; padding: 3px 6px; border-radius: 5px;
+  border: 1px solid var(--rule); background: var(--panel-bg); color: var(--fg);
+}
+
+.ws-syn-search {
+  font: inherit; font-size: 12.5px; padding: 4px 8px; border-radius: 6px; min-width: 180px;
+  border: 1px solid var(--rule); background: var(--toolbar-bg); color: var(--fg);
+}
+.ws-syn-card { display: flex; flex-direction: column; gap: 5px; }
+.ws-syn-word {
+  flex: 1 1 auto; font: inherit; font-size: 14px; font-weight: 600; padding: 3px 6px;
+  border: 1px solid var(--rule); border-radius: 5px; background: var(--panel-bg); color: var(--fg);
+}
+.ws-syn-alts { display: flex; flex-wrap: wrap; gap: 5px; }
+.ws-syn-alt {
+  font: inherit; font-size: 12px; padding: 3px 9px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--accent); background: transparent; color: var(--accent);
+}
+.ws-syn-alt:hover { background: var(--accent); color: #fff; }
+.ws-syn-input {
+  font: inherit; font-size: 12.5px; padding: 3px 7px; border-radius: 5px;
+  border: 1px solid var(--rule); background: var(--panel-bg); color: var(--fg);
+}
+
+.nt-hist-head { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+.nt-hist-row { border-bottom: 1px solid var(--rule); padding: 6px 0; }
+.nt-hist-row:last-child { border-bottom: none; }
+.nt-hist-meta { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.nt-hist-act { display: flex; gap: 6px; margin-top: 5px; flex-wrap: wrap; }
+.nt-diff { margin-top: 6px; padding: 6px 8px; border-left: 2px solid var(--rule); background: var(--panel-bg); }
+.nt-diff-row { display: flex; gap: 8px; align-items: flex-start; margin: 3px 0; }
+.nt-del-correct, .nt-ins-correct { color: inherit; }
+.nt-del-wrong, .nt-del-missing { color: #c53030; text-decoration: line-through; }
+.nt-del-extra { color: inherit; }
+.nt-ins-wrong, .nt-ins-extra { color: #2f855a; font-weight: 600; }
+.nt-ins-missing { color: inherit; }
+[data-theme="dark"] .nt-del-wrong, [data-theme="dark"] .nt-del-missing,
+[data-theme="blue-gold"] .nt-del-wrong, [data-theme="blue-gold"] .nt-del-missing { color: #fc8181; }
+[data-theme="dark"] .nt-ins-wrong, [data-theme="dark"] .nt-ins-extra,
+[data-theme="blue-gold"] .nt-ins-wrong, [data-theme="blue-gold"] .nt-ins-extra { color: #68d391; }
+
+/* =====================================================================
+   F18 学习总览
+   ===================================================================== */
+/* 学习总览的 KPI 比分析台多一倍（12 个），默认 96px 一格会把「≥2 篇复现」拆成三行 */
+#study-panel { width: 760px; }
+#study-panel .ins-kpi-item { flex: 0 1 108px; min-width: 104px; padding: 7px 6px; }
+#study-panel .ins-kpi-item b { font-size: 18px; }
+#study-panel .ins-kpi-item span { white-space: nowrap; font-size: 10.5px; }
+.so-bar { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.so-bar b { font-variant-numeric: tabular-nums; color: var(--fg); }
+.so-track {
+  flex: 1 1 auto; min-width: 60px; height: 7px; border-radius: 999px;
+  background: var(--rule); overflow: hidden; display: inline-block; vertical-align: middle;
+}
+.so-fill { display: block; height: 100%; background: var(--accent); }
+.so-table td { font-variant-numeric: tabular-nums; }
+.so-table tr.cur td { background: var(--summary-bg); }
+.so-title { max-width: 230px; }
+.so-link {
+  font: inherit; font-size: 12.5px; padding: 0; border: none; background: none; cursor: pointer;
+  color: var(--accent); text-decoration: underline; text-align: left; font-family: inherit;
+}
+@media (max-width: 620px) {
+  .so-title { max-width: 120px; }
+  .so-table th:nth-child(4), .so-table td:nth-child(4),
+  .so-table th:nth-child(5), .so-table td:nth-child(5) { display: none; }
+}
+
+/* =====================================================================
+   报纸模式下的浮层层级修复（P0）
+   ---------------------------------------------------------------------
+   .paper-root 是 position:fixed; inset:0; z-index:9000，且纸面**不透明**
+   （桌面方格 + --np-desk 实色）。而下面这些浮层都挂在 body 下、是它的**兄弟节点**，
+   原先的 z-index 全都低于 9000 —— 于是在默认的报纸阅读模式下它们被纸面整个盖住，
+   表现就是「点了没反应 / 对话框不出现」：
+     · .float-menu(200)     选中文字后的批注菜单 —— 生词 / 笔记 / 长难句 / 素材 / 词根 全从这里进
+     · .syntax-panel(300)   长难句 / 素材 / 写作工坊 / 阅读统计 / 新增的四个分析面板
+     · .backup-overlay(300) 备份与恢复对话框
+     · .crossref-panel(50)  文章关联
+     · .backref-banner(200) 跨文章跳转返回条
+     · .bookmark-pill(95) / .progress-bar(100)
+   这不是样式问题，是层级问题。统一抬到纸面之上，并保持彼此原有的相对顺序。
+   ⚠ 新增任何「挂在 body 下的浮层」都要在这里补一条，否则默认视图下它将是隐形的。 */
+body.paper-open .float-menu,
+body.paper-open .backref-banner,
+body.paper-open .crossref-panel,
+body.paper-open .bookmark-pill,
+body.paper-open .progress-bar { z-index: 9250; }
+body.paper-open .syntax-panel,
+body.paper-open .insight-panel,
+body.paper-open .stats-panel,
+body.paper-open .backup-overlay { z-index: 9300; }
+/* 顶部阅读进度条在纸面上用报纸强调色 */
+body.paper-open .progress-bar { background: var(--np-accent); }
