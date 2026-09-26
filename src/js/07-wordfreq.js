@@ -11,19 +11,23 @@
     };
     return freqSets;
   }
+  let _wfLoading = null;
   function ensureWordFreq(cb) {
     if (window.__WORD_FREQ__) { cb(); return; }
+    if (_wfLoading) { _wfLoading.push(cb); return; }   // 并发调用不再重复插 <script>
+    _wfLoading = [cb];
     const s = document.createElement('script');
-    s.src = 'wordfreq.js';
-    s.onload = cb;
-    s.onerror = () => showTopToast('词频数据加载失败（缺少 wordfreq.js）');
+    s.src = 'wordfreq.js' + ASSET_V;                    // 复用 reader.js 的版本戳，避免旧缓存
+    s.onload = () => { const cbs = _wfLoading; _wfLoading = null; cbs.forEach(f => f()); };
+    s.onerror = () => { _wfLoading = null; showTopToast('词频数据加载失败（缺少 wordfreq.js）'); };
     document.head.appendChild(s);
   }
   function freqModeOn() { return localStorage.getItem(FREQ_MODE_KEY) === '1'; }
   function applyFreqColoring() {
     const sets = buildFreqSets();
-    const body = document.querySelector('.col-body.en');
-    if (!sets || !body) return null;
+    // 报纸阅读页里每一版都有自己的 .col-body.en —— 必须遍历全部，否则只着色第一版
+    const bodies = document.querySelectorAll('.col-body.en');
+    if (!sets || !bodies.length) return null;
     const counts = { h: 0, m: 0, l: 0, x: 0, v: 0 };
     // 已录入生词本的词：优先于词频分级，标成 freq-v（金色），阅读时一眼可辨。
     // 注意：与标注原文完全一致的词已被 <mark> 高亮（walker 会跳过 mark），
@@ -53,6 +57,7 @@
         }
       });
     } catch (e) {}
+    bodies.forEach(body => {
     const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
         let p = node.parentNode;
@@ -98,6 +103,7 @@
       }
       if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
       tn.parentNode.replaceChild(frag, tn);
+    });
     });
     return counts;
   }
@@ -207,6 +213,8 @@
         });
       } catch (e) {}
     }
+    // 错题本也计入「今日待复习」——错题是按间隔重复排期的（调度在 11-insights.js）
+    if (typeof dueWrongCount === 'function') n += dueWrongCount();
     return n;
   }
   function attendanceData() {
@@ -428,10 +436,17 @@
 
   // ===== Reading progress bar =====
   function updateProgressBar() {
-    let scroller = document.querySelector('.col-body.en');
+    const bar = document.getElementById('progress-bar');
+    // 报纸阅读页：进度 = 版次进度（页面本身不纵向滚动）
+    if (typeof paperIsOpen === 'function' && paperIsOpen()) {
+      const total = (typeof paperPageCount === 'function') ? paperPageCount() : 0;
+      const cur = (typeof paperPageIndex === 'function') ? paperPageIndex() : 0;
+      if (bar) bar.style.width = total > 0 ? Math.round((cur + 1) / total * 100) + '%' : '0%';
+      return;
+    }
+    let scroller = document.querySelector('.main-wrap .col-body.en') || document.querySelector('.col-body.en');
     if (mobileQuery.matches) scroller = document.querySelector('.main-wrap') || scroller;
     if (!scroller) return;
     const pct = scroller.scrollTop / Math.max(1, scroller.scrollHeight - scroller.clientHeight) * 100;
-    const bar = document.getElementById('progress-bar');
     if (bar) bar.style.width = Math.min(100, Math.max(0, pct)) + '%';
   }
