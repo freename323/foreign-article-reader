@@ -17,8 +17,7 @@
     }));
   }
   function exportMarkdown() {
-    const title = document.querySelector('.title-block h1:not(.cn)')?.textContent || 'article';
-    const cnTitle = document.querySelector('.title-block h1.cn')?.textContent || '';
+    const title = document.querySelector('.title-block h1:not(.cn)')?.textContent || 'article';    const cnTitle = document.querySelector('.title-block h1.cn')?.textContent || '';
     const enAuthor = document.querySelector('.title-block .author:not(.cn)')?.textContent || '';
     const cnAuthor = document.querySelector('.title-block .author.cn')?.textContent || '';
     const thesis = collectThesis();
@@ -68,8 +67,9 @@
       });
     }
     const md = lines.join('\n');
-    downloadFile(`${title} - notes.md`, md, 'text/markdown;charset=utf-8');
-    showTopToast('已导出');
+    saveFile(`${title} - notes.md`, md, 'text/markdown;charset=utf-8').then(r => {
+      showTopToast(saveResultToast(r), r.where === 'folder' ? 3000 : 7000);
+    });
   }
   function exportJson() {
     const data = {
@@ -81,11 +81,10 @@
       annotations: annotations,
       exportedAt: new Date().toISOString(),
     };
-    downloadFile(
-      (data.title || 'article') + ' - notes.json',
-      JSON.stringify(data, null, 2), 'application/json;charset=utf-8'
-    );
-    showTopToast('已导出');
+    saveFile((data.title || 'article') + ' - notes.json',
+      JSON.stringify(data, null, 2), 'application/json;charset=utf-8').then(r => {
+      showTopToast(saveResultToast(r), r.where === 'folder' ? 3000 : 7000);
+    });
   }
   // ===== FEATURE: 生词 CSV 导出（Anki / Excel 可直接导入）=====
   function csvField(s) {
@@ -108,8 +107,10 @@
     // \ufeff BOM：让 Excel 正确识别 UTF-8 中文；\r\n：Anki/Excel 的通用行尾
     const csv = '\ufeff' + rows.join('\r\n');
     const name = 'vocab-' + backupStamp() + '.csv';
-    downloadFile(name, csv, 'text/csv;charset=utf-8');
-    showTopToast('已导出 ' + sorted.length + ' 个生词 → ' + name + '（Anki/Excel 可导入）');
+    saveFile(name, csv, 'text/csv;charset=utf-8').then(r => {
+      showTopToast(saveResultToast(r, '已导出 ' + sorted.length + ' 个生词') +
+        (r.where === 'folder' ? '' : '（Anki/Excel 可导入）'), r.where === 'folder' ? 3200 : 7000);
+    });
   }
   function extractVocab() {
     const todayStr = fmtDate(new Date().toISOString());
@@ -173,7 +174,7 @@
     if (!confirm('清空本篇所有数据（标注/概要/翻译/设置/阅读记录/句库/考试记录）？其他文章不受影响。')) return;
     const keys = [ANNO_KEY, SUM_KEY, TRANS_KEY, SETTINGS_KEY, READING_KEY,
       'syntax:' + articleId, 'wsj_reader:crossref:' + articleId];
-    const slug = EXAM_SLUGS[articleId];
+    const slug = articleMeta.slug;
     if (slug) ['examhl:', 'examq:', 'examtimer:', 'examlimit:'].forEach(p => keys.push(p + slug));
     keys.forEach(k => localStorage.removeItem(k));
     showTopToast('已清空本篇数据');
