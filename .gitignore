@@ -49,6 +49,7 @@ _articles.json
 thesis.txt
 en_body.html
 cn_body.html
+.git_commit_msg_*.txt
 
 # 包含具体文章引用的索引页（使用 index_template.html 作为模板）
 index.html

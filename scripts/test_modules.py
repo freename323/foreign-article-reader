@@ -112,6 +112,12 @@ async def test_reader_features(page, base, add):
     await page.reload()
     await page.wait_for_timeout(800)
     add('reader: 笔记搜索框注入', await page.locator('#notes-search-input').count() == 1)
+    # 新框架：笔记面板收起态 = display:none；默认 showNotes 可能为 true（调一次反而会关），
+    # 循环调用应用自身的 toggle 直到面板展开
+    await page.evaluate(
+        "() => { const s = document.querySelector('.notes-section'); let g = 0;"
+        " while (s && s.classList.contains('collapsed') && window.toggleNotes && g++ < 3) window.toggleNotes(); }")
+    await page.wait_for_timeout(300)
     # 输入不崩溃且能过滤（空标注也应显示空态文案）
     await page.fill('#notes-search-input', 'test')
     await page.wait_for_timeout(200)
@@ -135,16 +141,51 @@ async def test_reader_features(page, base, add):
 
 
 async def test_algorithm_suite(page, base, add):
-    await page.goto(f"file://{base / '_test_suite.html'}")
-    try:
-        await page.wait_for_function(
-            "document.getElementById('stats').textContent.includes('通过') && "
-            "!document.getElementById('stats').textContent.includes('尚未运行')",
-            timeout=30000)
-        stats = await page.locator('#stats').inner_text()
-        add('suite: 算法回归测试全部通过', '失败' not in stats, stats)
-    except Exception as e:
-        add('suite: 算法回归测试全部通过', False, f'timeout waiting for stats: {e}')
+    # 直接在 newtype 页面内 ?test=1 求值 window.__NT__ 做算法断言
+    # （旧 _test_suite.html 已在 v28-v30 清理中移除，页面内求值不依赖任何测试文件）
+    await page.goto(f"file://{base / 'newtype_ai_cost.html'}?test=1")
+    await page.evaluate("localStorage.clear()")
+    await page.reload()
+    await page.wait_for_timeout(800)
+    r = await page.evaluate(
+        """() => {
+          const N = window.__NT__;
+          if (!N) return { hook: false };
+          const out = { hook: true };
+          out.fns = ['mulberry32', 'shuffle', 'genA', 'genB', 'genC', 'genD', 'pickIndex']
+            .every(k => typeof N[k] === 'function');
+          const s42 = (n) => { const r = N.mulberry32(42); const a = []; for (let i = 0; i < n; i++) a.push(r()); return a; };
+          const m = s42(10000);
+          out.mulberryInRange = m.every(v => v >= 0 && v < 1);
+          out.mulberryDeterministic = JSON.stringify(s42(100)) === JSON.stringify(s42(100));
+          let boundsOk = true;
+          const pr = N.mulberry32(99);
+          for (let i = 0; i < 1000; i++) { const v = N.pickIndex(pr, 5); if (!Number.isInteger(v) || v < 0 || v >= 5) { boundsOk = false; break; } }
+          out.pickBoundsOk = boundsOk;
+          const sum = (x, y) => JSON.stringify(x) === JSON.stringify(y);
+          const A = N.genA(0);
+          out.genA = !!A && A.type === 'A' && Array.isArray(A.passage) && A.holes.length >= 3 && A.holes.length <= 5
+            && (A.options || []).length === 7
+            && A.holes.every(h => /^[A-G]$/.test(String((A.answers || {})[h.no] || '')));
+          out.genADeterministic = !!A && sum(A, N.genA(0));
+          const B = N.genB(0);
+          out.genB = !!B && B.type === 'B' && (B.paras || []).length >= 4 && (B.anchors || []).length >= 1 && (B.blanks || []).length >= 1;
+          const C = N.genC(0);
+          out.genC = !!C && C.type === 'C' && (C.items || []).length === 5 && (C.allOpts || []).length === 7
+            && (C.allOpts || []).every(o => o && String(o).length > 0);
+          const D = N.genD(0);
+          out.genD = !!D && D.type === 'D' && (D.items || []).length === 5 && (D.allOpts || []).length === 7
+            && (D.allOpts || []).every(o => o && String(o).length > 0);
+          return out;
+        }"""
+    )
+    add('suite: __NT__ 测试钩子可用且函数齐全', bool(r and r.get('hook') and r.get('fns')))
+    add('suite: mulberry32 值域 [0,1) 且确定', bool(r.get('mulberryInRange')) and bool(r.get('mulberryDeterministic')))
+    add('suite: pickIndex 1000 次无越界', bool(r.get('pickBoundsOk')))
+    add('suite: genA 结构/答案字母/确定性', bool(r.get('genA')) and bool(r.get('genADeterministic')))
+    add('suite: genB 结构（段落/锚点/空位）', bool(r.get('genB')))
+    add('suite: genC 结构（5 段 7 选项非空）', bool(r.get('genC')))
+    add('suite: genD 结构（5 段 7 选项非空）', bool(r.get('genD')))
 
 
 async def main():

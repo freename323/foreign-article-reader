@@ -8,13 +8,23 @@ param(
     [string]$Data = "_articles.json",
     [string]$OutDir = "articles",
     [string]$Input = "",
-    [string]$Lang = "en"
+    [string]$Lang = "en",
+    [string]$CommitMessage = ""
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ScriptsDir = Join-Path $ProjectRoot "scripts"
 $ArticlesDir = Join-Path $ProjectRoot "articles"
+
+# git 解析：优先 PATH，退化到 GitHub Desktop 自带的 git
+$Git = (Get-Command git -ErrorAction SilentlyContinue).Source
+if (-not $Git) {
+    $gdesks = Get-ChildItem "$env:LOCALAPPDATA\GitHubDesktop\app-*\resources\app\git\cmd\git.exe", "D:\GitHubDesktop\app-*\resources\app\git\cmd\git.exe" -ErrorAction SilentlyContinue |
+        Sort-Object FullName -Descending
+    if ($gdesks) { $Git = $gdesks[0].FullName }
+}
+if (-not $Git) { Write-Err "找不到 git.exe；请安装 Git 或 GitHub Desktop"; exit 1 }
 
 function Write-Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 function Write-Ok($msg) { Write-Host "  OK: $msg" -ForegroundColor Green }
@@ -87,6 +97,23 @@ switch ($Command) {
         Write-Ok "文章元数据已同步"
     }
 
+    "publish" {
+        if (-not $Input) { $Input = "origin" }
+        Write-Step "统一走 git：提交全部变更并推送到 $Input"
+        Push-Location $ProjectRoot
+        try {
+            & $Git add -A
+            & $Git diff --cached --quiet
+            if ($LASTEXITCODE -eq 0) { Write-Ok "没有可提交的变更"; return }
+            $msg = if ($CommitMessage) { $CommitMessage } else { "docs: publish via git (" + (Get-Date -Format 'yyyy-MM-dd HH:mm') + ")" }
+            & $Git commit -m $msg
+            if ($LASTEXITCODE -ne 0) { throw "git commit 失败" }
+            & $Git push $Input main
+            if ($LASTEXITCODE -ne 0) { throw "git push 失败（若是历史分叉，先 git pull --rebase）" }
+            Write-Ok "已推送到 $Input main（统一走 git，不再使用 API 直推）"
+        } finally { Pop-Location }
+    }
+
     "all" {
         if (-not (Test-Path (Join-Path $ProjectRoot $Data))) {
             Write-Err "数据文件不存在: $Data"
@@ -135,6 +162,7 @@ switch ($Command) {
   meta       同步文章 <body> 元数据（data-edition / data-has-exam）
   test       运行 UI 测试 (25 项)  --dir <目录>
   sync       合并并同步 src/reader.css|js + exam-panel.js -> articles/
+  publish    统一走 git：add -A → commit → push origin main  -CommitMessage "..."
   all        完整流程: verify -> summaries -> concat -> build -> sync -> meta
   clean      清理 __pycache__
   help       显示此帮助
