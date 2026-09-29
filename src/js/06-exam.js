@@ -1398,15 +1398,21 @@
     }
     return n.versions;
   }
-  // 存储占用对比：delta 模式 vs 假设每版都存全文
-  function noteStorageCompare(n) {
+  // 存储占用对比：delta 模式 vs 每版都存全文。
+// 两侧必须用**同一套记录结构**记账，否则百分比失真（v30 修）：
+// 旧版 delta 侧直接 JSON.stringify(vs)（含 savedAt / op / length / text 全部字段名），
+// full 侧只算 {title, content}（不含 savedAt）—— 元数据与结构开销单边计入，
+// 导致「小改动存增量」反而算出比「存全文」更大，saved 恒为 0。
+// 现改为：full 侧用与 delta 侧完全相同的元数据字段 {title, savedAt, full}。
+function noteStorageCompare(n) {
     const vs = (n && n.versions) || [];
     const delta = JSON.stringify(vs).length;
     let full = 0;
     for (let i = 0; i < vs.length; i++) {
-      full += JSON.stringify({ title: (vs[i] && vs[i].title) || '', content: noteVersionContent(n, i) }).length;
+      const v = vs[i] || {};
+      full += JSON.stringify({ title: v.title || '', savedAt: v.savedAt || '', full: noteVersionContent(n, i) }).length;
     }
-    return { delta: delta, full: full, saved: full ? Math.max(0, Math.round((1 - delta / full) * 100)) : 0 };
+    return { delta: delta, full: full, saved: full > delta ? Math.round((1 - delta / full) * 100) : 0 };
   }
   function noteDiffHTML(oldText, newText) {
     const d = (typeof window.diffWords === 'function') ? window.diffWords(oldText, newText) : null;

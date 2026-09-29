@@ -206,9 +206,17 @@
       html += '<div class="ins-list">' + list.map(w => {
         const uid = esc(wrongRevKey(w.store, w.key));
         const rev = w.rev || {};
-        const when = rev.last ? String(rev.last).replace('T', ' ').slice(0, 16) : '未复习';
+        // v30 修：旧版直接截 ISO(UTC) 字符串前 16 位 → 北京时间 00:00-08:00 的复习
+        // 会显示成前一天（同一行里 nextDue 却是本地日期，两个时区混排）。
+        // 改为先转本地时间再格式化；解析失败回退原字符串。
+        const when = rev.last ? (function () {
+          const d = new Date(rev.last);
+          if (isNaN(d.getTime())) return String(rev.last).replace('T', ' ').slice(0, 16);
+          const p = n => String(n).padStart(2, '0');
+          return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+        })() : '未复习';
         const state = rev.done ? '<span class="ins-tag ok">已掌握</span>'
-          : (rev.nextDue ? '<span class="ins-tag' + (w.due ? ' due' : '') + '">' + (w.due ? '今日到期' : rev.nextDue + ' 复习') + '</span>' : '<span class="ins-tag">未开始</span>');
+          : (rev.nextDue ? '<span class="ins-tag' + (w.due ? ' due' : '') + '">' + (w.due ? '今日到期' : esc(rev.nextDue) + ' 复习') + '</span>' : '<span class="ins-tag">未开始</span>');
         return '<div class="ins-row">' +
           '<div class="ins-row-main">' +
           '<div class="ins-row-title">' +
@@ -273,6 +281,15 @@
   // 数据来自 wsj_exam:history 的 perQ[].type —— 每道题的题型早在交卷时就逐题落库了，
   // **不需要**说明书里的 exam:stats:<articleId> 这种新键。
   const RADAR_TYPES = ['细节', '推理', '主旨', '态度', '词义', '例证'];
+  // v30 修：题库里的 type 是完整名且带后缀（细节理解题 / [主旨大意题] / 推理判断题 …），
+  // 旧版拿短名做精确键查找 → 全部 miss → 雷达图恒为空、KPI 显示「其他题型 N」。
+  // 这里做归一化：剥方括号、剥尾部「题」，再用短名前缀匹配。
+  function insRadarShortName(raw) {
+    const t = String(raw || '').replace(/[\[\]【】（）()]/g, '').replace(/题$/, '').trim();
+    if (!t) return '';
+    for (let i = 0; i < RADAR_TYPES.length; i++) if (t.indexOf(RADAR_TYPES[i]) === 0) return RADAR_TYPES[i];
+    return t;   // 认不出来的原样返回，落到 other
+  }
   function radarData() {
     const hist = insLoad('wsj_exam:history', []) || [];
     const acc = {};
@@ -285,7 +302,7 @@
         if (!q || !q.mine) return;                  // 未作答不计入（考试态留空 ≠ 答错）
         answered++;
         const ok = String(q.mine) === String(q.right);
-        const t = String(q.type || '').trim();
+        const t = insRadarShortName(q.type);
         if (acc[t]) { acc[t].total++; if (ok) acc[t].correct++; }
         else other++;
       });
@@ -871,8 +888,12 @@
       if (!h || (h.mode && h.mode !== 'exam' && h.mode !== 'reading')) return;
       correct += Number(h.correct || 0); total += Number(h.total || 0);
     });
-    const dueWords = (typeof dueReviewCount === 'function') ? dueReviewCount() : 0;
+    // v30 修：dueReviewCount() 内部已经把 dueWrongCount() 累加进去了（07-wordfreq.js:216-218，
+    // 工具栏角标要的是"生词+错题"合并总数）。这里再直接贴上「今日待复习生词」标签，
+    // 会与下一格的「今日待复习错题」重复计数——有错题没生词时两格显示同一个数。
     const dueWrongs = (typeof dueWrongCount === 'function') ? dueWrongCount() : 0;
+    const dueTotal = (typeof dueReviewCount === 'function') ? dueReviewCount() : 0;
+    const dueWords = Math.max(0, dueTotal - dueWrongs);
     const readPct = rows.length ? Math.round(rows.reduce((n, r) => n + r.progress, 0) / rows.length) : 0;
     let html =
       '<div class="ins-kpi">' +

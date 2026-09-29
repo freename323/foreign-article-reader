@@ -73,14 +73,20 @@
       if (!cnText) { skipped.push(idx); return; }
       const enS = dictSplitEn(enText), cnS = dictSplitCn(cnText);
       if (enS.length > 1 && enS.length === cnS.length) {
+        // v30 修：旧版在 forEach 内按**句**判定，却把**段号** push 进 skipped。
+        // 一段 3 句、其中 1 句太短 → 该段既进了 items（2 道题）又被算进「另有 N 处未出题」，
+        // 同一个段号被重复计数。改为：先收集本段出题数，全被过滤才记入 skipped。
+        let made = 0;
         enS.forEach((s, k) => {
           const n = dictWords(s).length;
-          if (n < 6 || n > 45) { skipped.push(idx); return; }
+          if (n < 6 || n > 45) return;              // 过滤掉这一句，不算整段未出题
+          made++;
           items.push({
             id: 'p' + idx + 's' + (k + 1), paraIdx: idx, en: s, cn: cnS[k],
             star: !!star[dictKey(s.slice(0, 60))]
           });
         });
+        if (!made) skipped.push(idx);
       } else {
         // 英中句数不一致：整段作为一格（太长就不出题，避免默写 200 词）
         const n = dictWords(enText).length;
@@ -196,7 +202,7 @@
   }
 
   // ---------- 面板 ----------
-  let dictState = { idx: 0, filter: 'all', items: [], skipped: [], input: '', result: null, revealed: false };
+  let dictState = { idx: 0, filter: 'all', items: [], skipped: [], input: '', result: null, revealed: false, recorded: false };
   var _dictBound = false;
 
   function dictStats() { return insLoad(DICT_STATS_KEY, {}) || {}; }
@@ -221,11 +227,21 @@
       body.addEventListener('click', e => {
         const t = e.target;
         const pick = t.closest && t.closest('[data-dfilter]');
-        if (pick) { dictState.filter = pick.dataset.dfilter; dictState.idx = 0; nextDictItem(); return; }
+        if (pick) {
+          dictState.filter = pick.dataset.dfilter;
+          // v30 修：旧版是 idx=0 + nextDictItem()（"前进"语义）。若 items[0] 本身满足
+          // 新筛选，pos=0 → 落到 list[1]，第一句被跳过；点已激活的 chip 也会跳。
+          // 改成直接定位到筛选结果的第一项。
+          const fl = dictFiltered();
+          if (fl.length) dictState.idx = dictState.items.indexOf(fl[0]);
+          else dictState.idx = 0;
+          renderDictation();
+          return;
+        }
         if (t.closest && t.closest('#dict-submit')) { submitDictation(); return; }
         if (t.closest && t.closest('#dict-skip')) { nextDictItem(); return; }
         if (t.closest && t.closest('#dict-reveal')) {
-          dictState.revealed = true; dictState.result = dictDiff(currentItem().en, dictState.input);
+          dictState.revealed = true; dictState.recorded = false; dictState.result = dictDiff(currentItem().en, dictState.input);
           renderDictation(); return;
         }
         if (t.closest && t.closest('#dict-prev')) { moveDict(-1); return; }
@@ -245,7 +261,11 @@
         }
       });
       body.addEventListener('input', e => {
-        if (e.target && e.target.id === 'dict-input') dictState.input = e.target.value;
+        if (!e.target || e.target.id !== 'dict-input') return;
+        dictState.input = e.target.value;
+        // v30 修：旧版只更新 input，不清 result，导致提交过一次后继续改写，
+        // 下方仍显示上一次的正确率 + 逐词着色 + 错词列表（内容与实际输入不符）。
+        if (dictState.result) { dictState.result = null; dictState.revealed = false; renderDictation(); }
       });
       body.addEventListener('keydown', e => {
         if (e.target && e.target.id === 'dict-input' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -255,12 +275,28 @@
     }
   }
   function currentItem() { return dictState.items[dictState.idx] || null; }
+  // v30 修：提交时写的是 rec.lastAccuracy（见 submitDictation），旧版这里读 s.accuracy，
+  // 而全项目没有任何地方写 accuracy 字段 → undefined < 80 恒为 false →
+  // 「正确率 <80%」筛选永久失效（chip 计数恒 0、点进去空列表）。
+  // 兼容写法：优先 accuracy（若将来改字段名），回退 lastAccuracy。
+  function dictStatAccuracy(s) {
+    if (!s) return null;
+    const v = (s.accuracy != null) ? s.accuracy : s.lastAccuracy;
+    return (typeof v === 'number') ? v : null;
+  }
+  function dictFilteredCount(kind) {
+    const saved = dictState.filter;
+    dictState.filter = kind;
+    const n = dictFiltered().length;
+    dictState.filter = saved;
+    return n;
+  }
   function dictFiltered() {
     const st = dictStats();
     return dictState.items.filter(it => {
       const s = st[articleId + '#' + it.id];
       if (dictState.filter === 'todo') return !s;
-      if (dictState.filter === 'fail') return s && s.accuracy < 80;
+      if (dictState.filter === 'fail') { const a = dictStatAccuracy(s); return a != null && a < 80; }
       if (dictState.filter === 'star') return !!it.star;
       return true;
     });
@@ -302,6 +338,9 @@
     st[k] = rec;
     insSave(DICT_STATS_KEY, st);
     if (r.wrongWords.length) dictAddWrongs(r.wrongWords, it.paraIdx);
+    // v30 修：只有 submitDictation 真的写了错词本；「看答案」路径也会产生 result，
+    // 但从没调用 dictAddWrongs —— 旧版统一写死「已记入错词本」，展开错词本却是空的。
+    dictState.recorded = r.wrongWords.length > 0;
     renderDictation();
     showTopToast(r.accuracy >= 95 ? '几乎完全正确（' + r.accuracy + '%）'
       : r.accuracy >= 80 ? '不错（' + r.accuracy + '%），还有 ' + r.wrongWords.length + ' 处要改'
@@ -333,7 +372,7 @@
     const chips = [
       ['all', '全部 ' + dictState.items.length],
       ['todo', '未默写 ' + (dictState.items.length - done)],
-      ['fail', '正确率 <80% ' + dictState.items.filter(x => st[articleId + '#' + x.id] && st[articleId + '#' + x.id].accuracy < 80).length],
+      ['fail', '正确率 <80% ' + dictFilteredCount('fail')],
       ['star', '★ 长难句 ' + dictState.items.filter(x => x.star).length]
     ];
     let html = '<div class="ins-filters">' + chips.map(c =>
@@ -380,7 +419,8 @@
       if (r.wrongWords.length) {
         const uniq = [];
         r.wrongWords.forEach(w => { if (!uniq.some(x => dictKey(x) === dictKey(w))) uniq.push(w); });
-        html += '<div class="dt-wrong"><b>错词 ' + uniq.length + ' 个（已记入错词本）</b>' +
+        html += '<div class="dt-wrong"><b>错词 ' + uniq.length + ' 个（' +
+          (dictState.recorded ? '已记入错词本' : '未提交，未记入错词本') + '）</b>' +
           '<div class="dt-wrong-list">' + uniq.map(w =>
             '<button type="button" class="ins-chip" data-dvocab="' + esc(w) + '" data-dpara="' + esc(it.paraIdx) +
             '" title="加入生词本">' + esc(w) + ' ＋</button>').join('') + '</div>' +

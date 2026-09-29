@@ -77,13 +77,25 @@
     const el = document.querySelector('.title-block .meta');
     const parts = (el ? el.textContent : '').split('·').map(s => s.trim()).filter(Boolean).map(s => s.replace(/\s+/g, ' '));
     let date = '', cnSource = '';
+    // 「像不像一段日期」——必须整段判定，不能用单字黑名单。
+    // v30 修：原来用 /[年月日]/ 排除日期，结果把「星期日泰晤士报」「观点 — 华尔街日报 A13 版」
+    // 这类**含「日」字的正当刊名**一起误杀，9 篇里 8 篇中文报头回落成英文来源。
+    const looksDate = (p) => /(?:19|20)\d{2}/.test(p) || /^\s*\d{1,2}\s*月/.test(p) || /^\s*\d{4}\s*年/.test(p) || /^\s*\d{1,2}\s*[—–-]/.test(p);
+    // 「像不像一句标题/正文」——含句末标点或中英混排长句就不是刊名
+    const looksSentence = (p) => /[，。；：？！]/.test(p) || /[a-zA-Z]{4,}/.test(p);
+    // 刊名不该和文章标题重复（部分文章 .meta 里没有来源段，parts 会直接含标题）
+    // 注意：h1 不只在 .title-block 里，.col-header 里每个栏目也各有一个，必须全查
+    const h1Texts = [].slice.call(document.querySelectorAll('h1')).map(h => (h.textContent || '').trim());
+    const isHeadline = (p) => h1Texts.some(h => h && (h === p || h.indexOf(p) >= 0 || p.indexOf(h) >= 0));
     parts.forEach(p => {
       if (!date && /(?:19|20)\d{2}/.test(p)) date = p;
-      // 中文来源：短、且不是日期/句子（"星期日泰晤士报" 是来源；"谄媚式 AI 扭曲社会……" 是标题）
-      if (!cnSource && /[\u4e00-\u9fa5]/.test(p) && !/[年月日]/.test(p) &&
-          p.length <= 12 && !/[，。；]/.test(p)) cnSource = p;
+      // 中文来源：短、含中文、不是日期、不是句子、不是文章标题
+      if (!cnSource && /[\u4e00-\u9fa5]/.test(p) && !looksDate(p) &&
+          p.length <= 20 && !looksSentence(p) && !isHeadline(p)) cnSource = p;
     });
-    const source = parts[0] || '';
+    // 英文来源：parts[0] 只在"不像标题"时才认（部分文章 .meta 里没有来源段，parts[0] 直接是标题）
+    const first = parts[0] || '';
+    const source = (/^[A-Za-z]/.test(first) && first.length <= 40 && !/[.。?？!！]/.test(first)) ? first : '';
     return { source: source, date: date, iso: paperIsoDate(), cnSource: cnSource || source };
   }
   // 中文刊名（中文版报纸的报头）
@@ -729,7 +741,10 @@
 
   function paperEnter() {
     if (!paperRestore) paperRestore = paperCapture();
-    if (!paperRestore) return;
+    // v30 修：捕获失败（页面没有 .col-body.cn）时返回 false，让调用方能回滚状态。
+    // 旧版只是静默 return，但 togglePaper 已先把 paperEntered 置 true + 写了 localStorage，
+    // 结果所有外部模块都以为"报纸版已开"：滚动进度条停摆、阅读位置不再记录、三栏同步全跳过。
+    if (!paperRestore) return false;
     paperEnsureRoot();
     document.body.classList.add('paper-open');
     const cap = paperRestore;
@@ -739,6 +754,7 @@
     paperBuild();
     // 进入时若正在看某段，落到对应版
     updatePaperButtons();
+    return true;
   }
 
   function paperExit() {
@@ -793,9 +809,15 @@
     const want = force === undefined ? !paperEntered : !!force;
     if (want === paperEntered) return;
     if (want) {
+      // v30 修：先进入，成功后才落状态；失败则整体回滚，避免半开状态
+      if (paperEnter() === false) {
+        paperRestore = null;
+        paperSetView('reader');
+        if (!initializing) showTopToast('未找到正文列（缺中文或英文栏），已保持三栏对照视图');
+        return;
+      }
       paperEntered = true;
       paperSetView(PAPER_VIEW);
-      paperEnter();
       if (!initializing) showTopToast('报纸版：← → 翻版，点版面左右翻页，Esc 切回三栏');
     } else {
       paperEntered = false;
@@ -908,7 +930,14 @@
   window.addEventListener('resize', () => {
     if (!paperModeOn()) return;
     clearTimeout(paperResizeTimer);
-    paperResizeTimer = setTimeout(() => { if (paperModeOn()) paperBuild(); }, 320);
+    // v30 修：paperApplyFont 只在 root 首次创建时写过一次 --np-font，
+    // 里面含「窄屏 ×0.92」的收缩系数，导致窗口跨过 900px 后字号再也不跟随。
+    // 重排版前先重算字号。
+    paperResizeTimer = setTimeout(() => {
+      if (!paperModeOn()) return;
+      paperApplyFont();
+      paperBuild();
+    }, 320);
   });
 
   window.togglePaper = togglePaper;

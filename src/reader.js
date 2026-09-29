@@ -3287,13 +3287,25 @@
     const el = document.querySelector('.title-block .meta');
     const parts = (el ? el.textContent : '').split('·').map(s => s.trim()).filter(Boolean).map(s => s.replace(/\s+/g, ' '));
     let date = '', cnSource = '';
+    // 「像不像一段日期」——必须整段判定，不能用单字黑名单。
+    // v30 修：原来用 /[年月日]/ 排除日期，结果把「星期日泰晤士报」「观点 — 华尔街日报 A13 版」
+    // 这类**含「日」字的正当刊名**一起误杀，9 篇里 8 篇中文报头回落成英文来源。
+    const looksDate = (p) => /(?:19|20)\d{2}/.test(p) || /^\s*\d{1,2}\s*月/.test(p) || /^\s*\d{4}\s*年/.test(p) || /^\s*\d{1,2}\s*[—–-]/.test(p);
+    // 「像不像一句标题/正文」——含句末标点或中英混排长句就不是刊名
+    const looksSentence = (p) => /[，。；：？！]/.test(p) || /[a-zA-Z]{4,}/.test(p);
+    // 刊名不该和文章标题重复（部分文章 .meta 里没有来源段，parts 会直接含标题）
+    // 注意：h1 不只在 .title-block 里，.col-header 里每个栏目也各有一个，必须全查
+    const h1Texts = [].slice.call(document.querySelectorAll('h1')).map(h => (h.textContent || '').trim());
+    const isHeadline = (p) => h1Texts.some(h => h && (h === p || h.indexOf(p) >= 0 || p.indexOf(h) >= 0));
     parts.forEach(p => {
       if (!date && /(?:19|20)\d{2}/.test(p)) date = p;
-      // 中文来源：短、且不是日期/句子（"星期日泰晤士报" 是来源；"谄媚式 AI 扭曲社会……" 是标题）
-      if (!cnSource && /[\u4e00-\u9fa5]/.test(p) && !/[年月日]/.test(p) &&
-          p.length <= 12 && !/[，。；]/.test(p)) cnSource = p;
+      // 中文来源：短、含中文、不是日期、不是句子、不是文章标题
+      if (!cnSource && /[\u4e00-\u9fa5]/.test(p) && !looksDate(p) &&
+          p.length <= 20 && !looksSentence(p) && !isHeadline(p)) cnSource = p;
     });
-    const source = parts[0] || '';
+    // 英文来源：parts[0] 只在"不像标题"时才认（部分文章 .meta 里没有来源段，parts[0] 直接是标题）
+    const first = parts[0] || '';
+    const source = (/^[A-Za-z]/.test(first) && first.length <= 40 && !/[.。?？!！]/.test(first)) ? first : '';
     return { source: source, date: date, iso: paperIsoDate(), cnSource: cnSource || source };
   }
   // 中文刊名（中文版报纸的报头）
@@ -3939,7 +3951,10 @@
 
   function paperEnter() {
     if (!paperRestore) paperRestore = paperCapture();
-    if (!paperRestore) return;
+    // v30 修：捕获失败（页面没有 .col-body.cn）时返回 false，让调用方能回滚状态。
+    // 旧版只是静默 return，但 togglePaper 已先把 paperEntered 置 true + 写了 localStorage，
+    // 结果所有外部模块都以为"报纸版已开"：滚动进度条停摆、阅读位置不再记录、三栏同步全跳过。
+    if (!paperRestore) return false;
     paperEnsureRoot();
     document.body.classList.add('paper-open');
     const cap = paperRestore;
@@ -3949,6 +3964,7 @@
     paperBuild();
     // 进入时若正在看某段，落到对应版
     updatePaperButtons();
+    return true;
   }
 
   function paperExit() {
@@ -4003,9 +4019,15 @@
     const want = force === undefined ? !paperEntered : !!force;
     if (want === paperEntered) return;
     if (want) {
+      // v30 修：先进入，成功后才落状态；失败则整体回滚，避免半开状态
+      if (paperEnter() === false) {
+        paperRestore = null;
+        paperSetView('reader');
+        if (!initializing) showTopToast('未找到正文列（缺中文或英文栏），已保持三栏对照视图');
+        return;
+      }
       paperEntered = true;
       paperSetView(PAPER_VIEW);
-      paperEnter();
       if (!initializing) showTopToast('报纸版：← → 翻版，点版面左右翻页，Esc 切回三栏');
     } else {
       paperEntered = false;
@@ -4118,7 +4140,14 @@
   window.addEventListener('resize', () => {
     if (!paperModeOn()) return;
     clearTimeout(paperResizeTimer);
-    paperResizeTimer = setTimeout(() => { if (paperModeOn()) paperBuild(); }, 320);
+    // v30 修：paperApplyFont 只在 root 首次创建时写过一次 --np-font，
+    // 里面含「窄屏 ×0.92」的收缩系数，导致窗口跨过 900px 后字号再也不跟随。
+    // 重排版前先重算字号。
+    paperResizeTimer = setTimeout(() => {
+      if (!paperModeOn()) return;
+      paperApplyFont();
+      paperBuild();
+    }, 320);
   });
 
   window.togglePaper = togglePaper;
@@ -4344,9 +4373,17 @@
       html += '<div class="ins-list">' + list.map(w => {
         const uid = esc(wrongRevKey(w.store, w.key));
         const rev = w.rev || {};
-        const when = rev.last ? String(rev.last).replace('T', ' ').slice(0, 16) : '未复习';
+        // v30 修：旧版直接截 ISO(UTC) 字符串前 16 位 → 北京时间 00:00-08:00 的复习
+        // 会显示成前一天（同一行里 nextDue 却是本地日期，两个时区混排）。
+        // 改为先转本地时间再格式化；解析失败回退原字符串。
+        const when = rev.last ? (function () {
+          const d = new Date(rev.last);
+          if (isNaN(d.getTime())) return String(rev.last).replace('T', ' ').slice(0, 16);
+          const p = n => String(n).padStart(2, '0');
+          return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+        })() : '未复习';
         const state = rev.done ? '<span class="ins-tag ok">已掌握</span>'
-          : (rev.nextDue ? '<span class="ins-tag' + (w.due ? ' due' : '') + '">' + (w.due ? '今日到期' : rev.nextDue + ' 复习') + '</span>' : '<span class="ins-tag">未开始</span>');
+          : (rev.nextDue ? '<span class="ins-tag' + (w.due ? ' due' : '') + '">' + (w.due ? '今日到期' : esc(rev.nextDue) + ' 复习') + '</span>' : '<span class="ins-tag">未开始</span>');
         return '<div class="ins-row">' +
           '<div class="ins-row-main">' +
           '<div class="ins-row-title">' +
@@ -4411,6 +4448,15 @@
   // 数据来自 wsj_exam:history 的 perQ[].type —— 每道题的题型早在交卷时就逐题落库了，
   // **不需要**说明书里的 exam:stats:<articleId> 这种新键。
   const RADAR_TYPES = ['细节', '推理', '主旨', '态度', '词义', '例证'];
+  // v30 修：题库里的 type 是完整名且带后缀（细节理解题 / [主旨大意题] / 推理判断题 …），
+  // 旧版拿短名做精确键查找 → 全部 miss → 雷达图恒为空、KPI 显示「其他题型 N」。
+  // 这里做归一化：剥方括号、剥尾部「题」，再用短名前缀匹配。
+  function insRadarShortName(raw) {
+    const t = String(raw || '').replace(/[\[\]【】（）()]/g, '').replace(/题$/, '').trim();
+    if (!t) return '';
+    for (let i = 0; i < RADAR_TYPES.length; i++) if (t.indexOf(RADAR_TYPES[i]) === 0) return RADAR_TYPES[i];
+    return t;   // 认不出来的原样返回，落到 other
+  }
   function radarData() {
     const hist = insLoad('wsj_exam:history', []) || [];
     const acc = {};
@@ -4423,7 +4469,7 @@
         if (!q || !q.mine) return;                  // 未作答不计入（考试态留空 ≠ 答错）
         answered++;
         const ok = String(q.mine) === String(q.right);
-        const t = String(q.type || '').trim();
+        const t = insRadarShortName(q.type);
         if (acc[t]) { acc[t].total++; if (ok) acc[t].correct++; }
         else other++;
       });
@@ -5009,8 +5055,12 @@
       if (!h || (h.mode && h.mode !== 'exam' && h.mode !== 'reading')) return;
       correct += Number(h.correct || 0); total += Number(h.total || 0);
     });
-    const dueWords = (typeof dueReviewCount === 'function') ? dueReviewCount() : 0;
+    // v30 修：dueReviewCount() 内部已经把 dueWrongCount() 累加进去了（07-wordfreq.js:216-218，
+    // 工具栏角标要的是"生词+错题"合并总数）。这里再直接贴上「今日待复习生词」标签，
+    // 会与下一格的「今日待复习错题」重复计数——有错题没生词时两格显示同一个数。
     const dueWrongs = (typeof dueWrongCount === 'function') ? dueWrongCount() : 0;
+    const dueTotal = (typeof dueReviewCount === 'function') ? dueReviewCount() : 0;
+    const dueWords = Math.max(0, dueTotal - dueWrongs);
     const readPct = rows.length ? Math.round(rows.reduce((n, r) => n + r.progress, 0) / rows.length) : 0;
     let html =
       '<div class="ins-kpi">' +
@@ -5147,14 +5197,20 @@
       if (!cnText) { skipped.push(idx); return; }
       const enS = dictSplitEn(enText), cnS = dictSplitCn(cnText);
       if (enS.length > 1 && enS.length === cnS.length) {
+        // v30 修：旧版在 forEach 内按**句**判定，却把**段号** push 进 skipped。
+        // 一段 3 句、其中 1 句太短 → 该段既进了 items（2 道题）又被算进「另有 N 处未出题」，
+        // 同一个段号被重复计数。改为：先收集本段出题数，全被过滤才记入 skipped。
+        let made = 0;
         enS.forEach((s, k) => {
           const n = dictWords(s).length;
-          if (n < 6 || n > 45) { skipped.push(idx); return; }
+          if (n < 6 || n > 45) return;              // 过滤掉这一句，不算整段未出题
+          made++;
           items.push({
             id: 'p' + idx + 's' + (k + 1), paraIdx: idx, en: s, cn: cnS[k],
             star: !!star[dictKey(s.slice(0, 60))]
           });
         });
+        if (!made) skipped.push(idx);
       } else {
         // 英中句数不一致：整段作为一格（太长就不出题，避免默写 200 词）
         const n = dictWords(enText).length;
@@ -5270,7 +5326,7 @@
   }
 
   // ---------- 面板 ----------
-  let dictState = { idx: 0, filter: 'all', items: [], skipped: [], input: '', result: null, revealed: false };
+  let dictState = { idx: 0, filter: 'all', items: [], skipped: [], input: '', result: null, revealed: false, recorded: false };
   var _dictBound = false;
 
   function dictStats() { return insLoad(DICT_STATS_KEY, {}) || {}; }
@@ -5295,11 +5351,21 @@
       body.addEventListener('click', e => {
         const t = e.target;
         const pick = t.closest && t.closest('[data-dfilter]');
-        if (pick) { dictState.filter = pick.dataset.dfilter; dictState.idx = 0; nextDictItem(); return; }
+        if (pick) {
+          dictState.filter = pick.dataset.dfilter;
+          // v30 修：旧版是 idx=0 + nextDictItem()（"前进"语义）。若 items[0] 本身满足
+          // 新筛选，pos=0 → 落到 list[1]，第一句被跳过；点已激活的 chip 也会跳。
+          // 改成直接定位到筛选结果的第一项。
+          const fl = dictFiltered();
+          if (fl.length) dictState.idx = dictState.items.indexOf(fl[0]);
+          else dictState.idx = 0;
+          renderDictation();
+          return;
+        }
         if (t.closest && t.closest('#dict-submit')) { submitDictation(); return; }
         if (t.closest && t.closest('#dict-skip')) { nextDictItem(); return; }
         if (t.closest && t.closest('#dict-reveal')) {
-          dictState.revealed = true; dictState.result = dictDiff(currentItem().en, dictState.input);
+          dictState.revealed = true; dictState.recorded = false; dictState.result = dictDiff(currentItem().en, dictState.input);
           renderDictation(); return;
         }
         if (t.closest && t.closest('#dict-prev')) { moveDict(-1); return; }
@@ -5319,7 +5385,11 @@
         }
       });
       body.addEventListener('input', e => {
-        if (e.target && e.target.id === 'dict-input') dictState.input = e.target.value;
+        if (!e.target || e.target.id !== 'dict-input') return;
+        dictState.input = e.target.value;
+        // v30 修：旧版只更新 input，不清 result，导致提交过一次后继续改写，
+        // 下方仍显示上一次的正确率 + 逐词着色 + 错词列表（内容与实际输入不符）。
+        if (dictState.result) { dictState.result = null; dictState.revealed = false; renderDictation(); }
       });
       body.addEventListener('keydown', e => {
         if (e.target && e.target.id === 'dict-input' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -5329,12 +5399,28 @@
     }
   }
   function currentItem() { return dictState.items[dictState.idx] || null; }
+  // v30 修：提交时写的是 rec.lastAccuracy（见 submitDictation），旧版这里读 s.accuracy，
+  // 而全项目没有任何地方写 accuracy 字段 → undefined < 80 恒为 false →
+  // 「正确率 <80%」筛选永久失效（chip 计数恒 0、点进去空列表）。
+  // 兼容写法：优先 accuracy（若将来改字段名），回退 lastAccuracy。
+  function dictStatAccuracy(s) {
+    if (!s) return null;
+    const v = (s.accuracy != null) ? s.accuracy : s.lastAccuracy;
+    return (typeof v === 'number') ? v : null;
+  }
+  function dictFilteredCount(kind) {
+    const saved = dictState.filter;
+    dictState.filter = kind;
+    const n = dictFiltered().length;
+    dictState.filter = saved;
+    return n;
+  }
   function dictFiltered() {
     const st = dictStats();
     return dictState.items.filter(it => {
       const s = st[articleId + '#' + it.id];
       if (dictState.filter === 'todo') return !s;
-      if (dictState.filter === 'fail') return s && s.accuracy < 80;
+      if (dictState.filter === 'fail') { const a = dictStatAccuracy(s); return a != null && a < 80; }
       if (dictState.filter === 'star') return !!it.star;
       return true;
     });
@@ -5376,6 +5462,9 @@
     st[k] = rec;
     insSave(DICT_STATS_KEY, st);
     if (r.wrongWords.length) dictAddWrongs(r.wrongWords, it.paraIdx);
+    // v30 修：只有 submitDictation 真的写了错词本；「看答案」路径也会产生 result，
+    // 但从没调用 dictAddWrongs —— 旧版统一写死「已记入错词本」，展开错词本却是空的。
+    dictState.recorded = r.wrongWords.length > 0;
     renderDictation();
     showTopToast(r.accuracy >= 95 ? '几乎完全正确（' + r.accuracy + '%）'
       : r.accuracy >= 80 ? '不错（' + r.accuracy + '%），还有 ' + r.wrongWords.length + ' 处要改'
@@ -5407,7 +5496,7 @@
     const chips = [
       ['all', '全部 ' + dictState.items.length],
       ['todo', '未默写 ' + (dictState.items.length - done)],
-      ['fail', '正确率 <80% ' + dictState.items.filter(x => st[articleId + '#' + x.id] && st[articleId + '#' + x.id].accuracy < 80).length],
+      ['fail', '正确率 <80% ' + dictFilteredCount('fail')],
       ['star', '★ 长难句 ' + dictState.items.filter(x => x.star).length]
     ];
     let html = '<div class="ins-filters">' + chips.map(c =>
@@ -5454,7 +5543,8 @@
       if (r.wrongWords.length) {
         const uniq = [];
         r.wrongWords.forEach(w => { if (!uniq.some(x => dictKey(x) === dictKey(w))) uniq.push(w); });
-        html += '<div class="dt-wrong"><b>错词 ' + uniq.length + ' 个（已记入错词本）</b>' +
+        html += '<div class="dt-wrong"><b>错词 ' + uniq.length + ' 个（' +
+          (dictState.recorded ? '已记入错词本' : '未提交，未记入错词本') + '）</b>' +
           '<div class="dt-wrong-list">' + uniq.map(w =>
             '<button type="button" class="ins-chip" data-dvocab="' + esc(w) + '" data-dpara="' + esc(it.paraIdx) +
             '" title="加入生词本">' + esc(w) + ' ＋</button>').join('') + '</div>' +
