@@ -186,6 +186,7 @@
         '<span class="crossref-count" id="crossref-count"></span>') +
       menuItemHTML('stats-panel-btn', '📊', '阅读统计') +
       '<div class="menu-sep"></div><div class="menu-section-label">精读工具</div>' +
+      menuItemHTML('linkmode-btn', '🔗', linkModeOn() ? '衔接模式 ✓ 开' : '衔接模式', '新题型训练：代词/逻辑连接词/词汇复现链着色；点代词再点先行词做配对') +
       menuItemHTML('pfunc-btn', '🏷', '段落功能标签', '给每段标论点 / 论据 / 转折 / 结论 / 背景 / 例证，看清文章结构') +
       menuItemHTML('vocabnet-btn', '🕸', '生词网络', '同一个词在多篇文章里出现的位置，点一下跳过去') +
       menuItemHTML('dictation-btn', '🖊', '中译英默写', '看着本段中文译文默写英文原句，逐词比对、错词进错词本') +
@@ -253,6 +254,7 @@
     on('wrongbook-btn', () => openWrongBook());
     on('radar-panel-btn', () => openRadar());
     on('pfunc-btn', () => openParaFuncPanel());
+    on('linkmode-btn', () => toggleLinkMode());
     on('vocabnet-btn', () => openVocabNet());
     on('dictation-btn', () => openDictation());
     on('derived-btn', () => setDerivedOn(!derivedOn()));
@@ -384,6 +386,8 @@
           const mode = localStorage.getItem('wsj_vocabrev:mode') || 'mask';
           if (mode === 'cloze') vocabClozeApply(); else vocabMaskApply();
         }
+        // v45: 衔接模式是持久开关 —— 打开过的文章自动带着线索色
+        if (typeof linkModeOn === 'function' && linkModeOn()) applyLinkMode();
       } catch (e) {}
     }, 900);
     // 从别的页面带 #para-N 跳进来时定位（等报纸版建好再跳，见 initHashJump）

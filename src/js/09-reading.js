@@ -190,6 +190,8 @@
     'wsj_vocabrev',
     // 词汇收件箱的导入日志（v41）—— WSJ_Hub 回流账本
     'wsj_inbox:log',
+    // 衔接线索模式的配对练习计数（v45）—— 07-wordfreq.js
+    'wsj_linkrev',
     // 中译英默写：每题成绩 + 错词本 —— 12-dictation.js
     'wsj_dictation:stats', 'wsj_dictation:wrongs'];
   function collectAppKeys() {

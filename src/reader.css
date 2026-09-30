@@ -1507,6 +1507,20 @@ mark.vrev-mask { background: var(--fg) !important; color: transparent !important
 .vrev-cloze.vrev-miss { border-bottom-color: #b22222; }
 .vrev-cloze.vrev-miss::placeholder { color: #b22222; opacity: .7; }
 
+/* v45: 衔接线索模式 —— 代词/逻辑连接词/词汇复现链（下划线系，与标注背景色系区分） */
+.link-pron { border-bottom: 2px solid #d4a830; background: rgba(212,168,48,.12); cursor: pointer; }
+.link-pick { outline: 2px solid var(--accent, #3d52cc); background: rgba(61,82,204,.15); border-radius: 2px; }
+.link-paired { border-bottom: 2px solid #2a9d6e; background: rgba(42,157,110,.14); }
+.link-logic-t { border-bottom: 2px solid #c0392b; }
+.link-logic-c { border-bottom: 2px solid #2980b9; }
+.link-logic-a { border-bottom: 2px solid #27ae60; }
+.link-logic-s { border-bottom: 2px solid #8e44ad; }
+.link-chain-1 { border-bottom: 2px dotted #e67e22; }
+.link-chain-2 { border-bottom: 2px dotted #16a085; }
+.link-chain-3 { border-bottom: 2px dotted #af7ac5; }
+.link-chain-4 { border-bottom: 2px dotted #ca6f1e; }
+.link-chain-5 { border-bottom: 2px dotted #5d6d7e; }
+
 /* v36: 范文页签 —— 整篇范文按段落阅读 */
 .ws-reads-body { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
 .ws-reads-body .ws-slot { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--card-bg); }

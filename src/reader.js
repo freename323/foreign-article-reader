@@ -2237,6 +2237,208 @@
     vrevMaybeFinish();
   }
 
+  // ===== FEATURE: 衔接线索模式（v45 T04）=====
+  // 新题型（7选5/排序）考的是 Halliday & Hasan 衔接链重建：代词找先行词、逻辑连接词、词汇复现。
+  // 本模式把三类线索显性着色；点代词 → 再点同段靠前的名词 = 配对练习（记 wsj_linkrev，不做正误强判——
+  // 先行词判定没有可靠启发式，错误的判定会教错，宁可只做视觉配对）。
+  const LINK_MODE_KEY = 'wsj_reader:linkmode';
+  const LINK_REV_KEY = 'wsj_linkrev';
+  function linkModeOn() { return localStorage.getItem(LINK_MODE_KEY) === '1'; }
+  function linkRevBump(aid) {
+    try {
+      const r = JSON.parse(localStorage.getItem(LINK_REV_KEY) || '{}') || {};
+      const e = r[aid] || { n: 0 };
+      e.n = (e.n || 0) + 1;
+      e.last = new Date().toISOString();
+      r[aid] = e;
+      localStorage.setItem(LINK_REV_KEY, JSON.stringify(r));
+    } catch (err) {}
+  }
+  const LINK_PRON = /\b(it|they|them|this|these|those|such|one|ones|both|neither|either|he|she|him|her|his|its|their|theirs|who|whose|which)\b/ig;
+  const LINK_LOGIC = [
+    ['t', /\b(however|nevertheless|nonetheless|yet|but|still|instead|rather|in contrast|by contrast|on the contrary|conversely)\b/ig],
+    ['c', /\b(therefore|thus|hence|consequently|accordingly|as a result|because of|due to|so that)\b/ig],
+    ['a', /\b(moreover|furthermore|in addition|additionally|besides|indeed|in fact|for instance|for example|similarly|likewise)\b/ig],
+    ['s', /\b(meanwhile|subsequently|eventually|finally|afterwards|later on|since then|in the end)\b/ig]
+  ];
+  // 复现链停用词：功能词与逻辑词不计链（否则 that/make 满屏都是「链」）
+  const LINK_STOP = new Set(('that with from this have been were their would could should about which there these those other more most only also some when where while after before between because through without itself himself themselves being doing very much many then them thus those such whose under over into upon among across already almost although always another around based given least less level made make makes might must never often once ones order others perhaps rather really said same seen several shall since still sure take taken takes thing think though times today told true turn under until upon well went whether while within world year years').split(' '));
+  let linkWired = false;
+  let linkPick = null;   // 待配对的代词 span
+  function linkEscapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+  function applyLinkMode() {
+    if (document.querySelector('.link-pron, .link-logic-t, .link-chain-1')) return;   // 幂等
+    const bodies = document.querySelectorAll('.col-body.en');
+    if (!bodies.length) return;
+    // 1) 代词 + 逻辑连接词：单遍扫描，逻辑短语优先、代词避开重叠区
+    bodies.forEach(body => {
+      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          let q = node.parentNode;
+          while (q && q !== body) {
+            if (q.nodeType === 1) {
+              const t = q.tagName;
+              if (t === 'MARK' || t === 'SCRIPT' || t === 'STYLE' || t === 'TEXTAREA') return NodeFilter.FILTER_REJECT;
+              if (q.classList && (String(q.className).indexOf('link-') === 0 || String(q.className).indexOf('freq-') === 0)) return NodeFilter.FILTER_REJECT;
+              if (q.getAttribute && q.getAttribute('contenteditable') === 'true') return NodeFilter.FILTER_REJECT;
+            }
+            q = q.parentNode;
+          }
+          return /[A-Za-z]/.test(node.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        }
+      });
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      nodes.forEach(tn => {
+        const text = tn.nodeValue;
+        const marks = [];
+        LINK_LOGIC.forEach(pair => {
+          pair[1].lastIndex = 0;
+          let m;
+          while ((m = pair[1].exec(text)) !== null) marks.push({ s: m.index, e: m.index + m[0].length, cls: 'link-logic-' + pair[0], w: m[0] });
+        });
+        LINK_PRON.lastIndex = 0;
+        let m;
+        while ((m = LINK_PRON.exec(text)) !== null) marks.push({ s: m.index, e: m.index + m[0].length, cls: 'link-pron', w: m[0] });
+        if (!marks.length) return;
+        marks.sort((a, b) => a.s - b.s || (b.e - b.s) - (a.e - a.s));
+        const merged = [];
+        let lastEnd = -1;
+        marks.forEach(mk => { if (mk.s < lastEnd) return; merged.push(mk); lastEnd = mk.e; });
+        const frag = document.createDocumentFragment();
+        let pos = 0;
+        merged.forEach(mk => {
+          if (mk.s > pos) frag.appendChild(document.createTextNode(text.slice(pos, mk.s)));
+          const sp = document.createElement('span');
+          sp.className = mk.cls;
+          sp.textContent = mk.w;
+          frag.appendChild(sp);
+          pos = mk.e;
+        });
+        if (pos < text.length) frag.appendChild(document.createTextNode(text.slice(pos)));
+        tn.parentNode.replaceChild(frag, tn);
+      });
+    });
+    // 2) 词汇复现链：正文实词按 token 计数，≥3 次成链（限 12 条），同链同色虚线
+    const counts = {};
+    bodies.forEach(body => {
+      (body.textContent.toLowerCase().match(/[a-z][a-z'\-]{3,}/g) || []).forEach(w => {
+        const t = w.replace(/^['\-]+|['\-]+$/g, '');
+        if (LINK_STOP.has(t)) return;
+        counts[t] = (counts[t] || 0) + 1;
+      });
+    });
+    const chains = Object.keys(counts).filter(t => counts[t] >= 3).sort((a, b) => counts[b] - counts[a]).slice(0, 12);
+    if (chains.length) {
+      const chainOf = {};
+      chains.forEach((t, i) => { chainOf[t] = 'link-chain-' + (i % 5 + 1); });
+      const chainRe = new RegExp('\\b(' + chains.map(linkEscapeRe).join('|') + ')\\b', 'ig');
+      bodies.forEach(body => {
+        const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+          acceptNode(node) {
+            let q = node.parentNode;
+            while (q && q !== body) {
+              if (q.nodeType === 1) {
+                const t = q.tagName;
+                if (t === 'MARK' || t === 'SCRIPT' || t === 'STYLE') return NodeFilter.FILTER_REJECT;
+                if (q.classList && String(q.className).indexOf('link-') === 0) return NodeFilter.FILTER_REJECT;
+              }
+              q = q.parentNode;
+            }
+            return /[A-Za-z]/.test(node.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+          }
+        });
+        const nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        nodes.forEach(tn => {
+          const text = tn.nodeValue;
+          const frag = document.createDocumentFragment();
+          let last = 0, m;
+          chainRe.lastIndex = 0;
+          while ((m = chainRe.exec(text)) !== null) {
+            if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+            const sp = document.createElement('span');
+            sp.className = chainOf[m[0].toLowerCase()];
+            sp.textContent = m[0];
+            frag.appendChild(sp);
+            last = m.index + m[0].length;
+          }
+          if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+          tn.parentNode.replaceChild(frag, tn);
+        });
+      });
+    }
+    // 3) 配对交互：点代词 → 再点同段靠前的词（caret 定位取词），视觉配对 + 计数
+    if (!linkWired) {
+      linkWired = true;
+      document.addEventListener('click', e => {
+        if (!linkModeOn()) return;
+        const pron = e.target.closest ? e.target.closest('.link-pron') : null;
+        if (pron) {
+          if (linkPick) linkPick.classList.remove('link-pick');
+          linkPick = pron;
+          pron.classList.add('link-pick');
+          showTopToast('选中代词 —— 再点击它指代的名词（同段靠前位置）；按 Esc 取消');
+          return;
+        }
+        if (!linkPick) return;
+        const bodyEl = e.target.closest ? e.target.closest('.col-body.en') : null;
+        if (!bodyEl || !bodyEl.contains(linkPick)) { linkPick.classList.remove('link-pick'); linkPick = null; return; }
+        let word = '';
+        try {
+          const gCP = document.caretRangeFromPoint || document.caretPositionFromPoint;
+          if (gCP) {
+            const range = gCP.call(document, e.clientX, e.clientY);
+            if (range && range.startContainer.nodeType === 3) {
+              const text = range.startContainer.textContent || '';
+              let off = range.startOffset;
+              while (off > 0 && /[A-Za-z'\-]/.test(text.charAt(off - 1))) off--;
+              let end = off;
+              while (end < text.length && /[A-Za-z'\-]/.test(text.charAt(end))) end++;
+              word = text.slice(off, end);
+            }
+          }
+        } catch (err) {}
+        const pronEl = linkPick;
+        pronEl.classList.remove('link-pick');
+        pronEl.classList.add('link-paired');
+        linkPick = null;
+        if (word) {
+          pronEl.title = '配对：' + word + '（练习已记录）';
+          showTopToast('已配对：' + pronEl.textContent + ' ← ' + word);
+        }
+        linkRevBump(articleId);
+      });
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && linkPick) { linkPick.classList.remove('link-pick'); linkPick = null; }
+      });
+    }
+    showTopToast('🔗 衔接模式：黄标=代词（点击配对先行词）、四色下划线=转折/因果/加合/时间、彩色虚线=词汇复现链');
+  }
+  function removeLinkMode() {
+    document.querySelectorAll('.col-body.en span[class^="link-"]').forEach(sp => {
+      const p = sp.parentNode;
+      if (!p) return;
+      while (sp.firstChild) p.insertBefore(sp.firstChild, sp);
+      p.removeChild(sp);
+    });
+    document.querySelectorAll('.col-body').forEach(b => b.normalize());
+  }
+  function toggleLinkMode() {
+    if (linkModeOn()) {
+      localStorage.setItem(LINK_MODE_KEY, '0');
+      removeLinkMode();
+      const b = document.getElementById('linkmode-btn');
+      if (b) b.innerHTML = '<span>🔗</span><span>衔接模式</span>';
+      showTopToast('衔接模式已关闭');
+      return;
+    }
+    localStorage.setItem(LINK_MODE_KEY, '1');
+    const b = document.getElementById('linkmode-btn');
+    if (b) b.innerHTML = '<span>🔗</span><span>衔接模式 ✓ 开</span>';
+    applyLinkMode();
+  }
+
   // ===== Full-text search =====
   let searchMatches = [];
   let searchNavStarted = false;
@@ -2934,6 +3136,8 @@
     'wsj_vocabrev',
     // 词汇收件箱的导入日志（v41）—— WSJ_Hub 回流账本
     'wsj_inbox:log',
+    // 衔接线索模式的配对练习计数（v45）—— 07-wordfreq.js
+    'wsj_linkrev',
     // 中译英默写：每题成绩 + 错词本 —— 12-dictation.js
     'wsj_dictation:stats', 'wsj_dictation:wrongs'];
   function collectAppKeys() {
@@ -6184,6 +6388,7 @@
         '<span class="crossref-count" id="crossref-count"></span>') +
       menuItemHTML('stats-panel-btn', '📊', '阅读统计') +
       '<div class="menu-sep"></div><div class="menu-section-label">精读工具</div>' +
+      menuItemHTML('linkmode-btn', '🔗', linkModeOn() ? '衔接模式 ✓ 开' : '衔接模式', '新题型训练：代词/逻辑连接词/词汇复现链着色；点代词再点先行词做配对') +
       menuItemHTML('pfunc-btn', '🏷', '段落功能标签', '给每段标论点 / 论据 / 转折 / 结论 / 背景 / 例证，看清文章结构') +
       menuItemHTML('vocabnet-btn', '🕸', '生词网络', '同一个词在多篇文章里出现的位置，点一下跳过去') +
       menuItemHTML('dictation-btn', '🖊', '中译英默写', '看着本段中文译文默写英文原句，逐词比对、错词进错词本') +
@@ -6251,6 +6456,7 @@
     on('wrongbook-btn', () => openWrongBook());
     on('radar-panel-btn', () => openRadar());
     on('pfunc-btn', () => openParaFuncPanel());
+    on('linkmode-btn', () => toggleLinkMode());
     on('vocabnet-btn', () => openVocabNet());
     on('dictation-btn', () => openDictation());
     on('derived-btn', () => setDerivedOn(!derivedOn()));
@@ -6382,6 +6588,8 @@
           const mode = localStorage.getItem('wsj_vocabrev:mode') || 'mask';
           if (mode === 'cloze') vocabClozeApply(); else vocabMaskApply();
         }
+        // v45: 衔接模式是持久开关 —— 打开过的文章自动带着线索色
+        if (typeof linkModeOn === 'function' && linkModeOn()) applyLinkMode();
       } catch (e) {}
     }, 900);
     // 从别的页面带 #para-N 跳进来时定位（等报纸版建好再跳，见 initHashJump）
