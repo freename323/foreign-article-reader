@@ -1490,6 +1490,23 @@ body.ws-docked.ws-collapsed .pane-article { margin-right: 44px; }
 }
 .ws-resize:hover, .ws-resize.active { background: var(--accent); opacity: .35; }
 
+/* v40: 语境内生词复习 —— 遮盖块 / 段落填空 / 渐退金 */
+.vrev-mask {
+  background: var(--fg); color: transparent; border-radius: 2px;
+  cursor: pointer; text-shadow: none; user-select: none;
+}
+.vrev-mask.vrev-open, span.vrev-open {
+  background: rgba(255,217,61,.35); color: inherit; cursor: default; border-radius: 2px;
+}
+mark.vrev-mask { background: var(--fg) !important; color: transparent !important; }
+.vrev-cloze {
+  border: none; border-bottom: 2px solid var(--accent);
+  background: var(--accent-bg); color: var(--fg);
+  font: inherit; padding: 0 4px; text-align: center;
+}
+.vrev-cloze.vrev-miss { border-bottom-color: #b22222; }
+.vrev-cloze.vrev-miss::placeholder { color: #b22222; opacity: .7; }
+
 /* v36: 范文页签 —— 整篇范文按段落阅读 */
 .ws-reads-body { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
 .ws-reads-body .ws-slot { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--card-bg); }

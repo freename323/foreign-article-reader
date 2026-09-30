@@ -29,6 +29,8 @@
     const bodies = document.querySelectorAll('.col-body.en');
     if (!sets || !bodies.length) return null;
     const counts = { h: 0, m: 0, l: 0, x: 0, v: 0 };
+    // v40 渐退提示的查询缓存：整表读一次，逐词查掌握强度（避免逐词 JSON.parse）
+    const vrevMap = vrevAll();
     // 已录入生词本的词：优先于词频分级，标成 freq-v（金色），阅读时一眼可辨。
     // 注意：与标注原文完全一致的词已被 <mark> 高亮（walker 会跳过 mark），
     // freq-v 真正覆盖的是短语里的单词和屈折变体（algorithm ↔ algorithms 等）
@@ -85,7 +87,12 @@
         const w = m[0];
         const lw = w.toLowerCase().replace(/^['\-]+|['\-]+$/g, '');
         let tier = null;
-        if (vocabSet.has(lw)) tier = 'v';
+        let vrevFade = 0;
+        if (vocabSet.has(lw)) {
+          // v40 渐退提示：连续答对轮次越多金色越浅，≥3 轮不再着色（该词已进长间隔）
+          vrevFade = vrevStrengthOf(vrevMap, articleId, lw);
+          if (vrevFade < 3) tier = 'v';
+        }
         else if (sets.h.has(lw)) tier = 'h';
         else if (sets.m.has(lw)) tier = 'm';
         else if (sets.l.has(lw)) tier = 'l';
@@ -93,6 +100,7 @@
         if (tier) {
           const sp = document.createElement('span');
           sp.className = 'freq-' + tier;
+          if (tier === 'v' && vrevFade > 0) sp.style.opacity = String(1 - vrevFade * 0.3);
           sp.textContent = w;
           frag.appendChild(sp);
           counts[tier]++;
@@ -448,4 +456,274 @@
     if (!scroller) return;
     const pct = scroller.scrollTop / Math.max(1, scroller.scrollHeight - scroller.clientHeight) * 100;
     if (bar) bar.style.width = Math.min(100, Math.max(0, pct)) + '%';
+  }
+
+  // ===== FEATURE: 语境内生词复习（v40：遮盖重读 / 段落填空）=====
+  // 生词标注过去只有"存"没有"取"——dueReviewCount 只数题型卡与错题，vocab 零检索零调度。
+  // 编码特异性（Tulving）：提取语境=编码语境时迁移率最高，所以复习放回原段落；
+  // 闪卡红线：复习单位是段落与词，不做翻卡 UI。点击黑块=想起来了（答对），右键=没想起来（答错）。
+  const VREV_KEY = 'wsj_vocabrev';
+  const VREV_ACTIVE_KEY = 'wsj_vocabrev:active';   // 值 = articleId；复习完成或退出时清除
+  const VREV_MODE_KEY = 'wsj_vocabrev:mode';       // 'mask' | 'cloze'
+  const VREV_STEPS = [1, 2, 4, 8, 16, 35];
+  function vrevAll() { try { return JSON.parse(localStorage.getItem(VREV_KEY)) || {}; } catch (e) { return {}; } }
+  function vrevSave(all) { try { localStorage.setItem(VREV_KEY, JSON.stringify(all)); } catch (e) { showTopToast('⚠ 生词复习记录写入失败（存储已满？）'); } }
+  function vrevAddDays(n) { const d = new Date(); d.setDate(d.getDate() + n); return localDateStr(d); }
+  function vrevKey(aid, word) { return aid + '|' + String(word || '').toLowerCase(); }
+  // 调度纯函数（T07 抽公共调度器前的雏形）：答对步进、答错归 1 天
+  function vocabSchedule(entry, wasCorrect) {
+    const e = entry || { n: 0 };
+    if (wasCorrect) {
+      e.n = (e.n || 0) + 1;
+      e.nextDue = vrevAddDays(VREV_STEPS[Math.min(e.n - 1, VREV_STEPS.length - 1)]);
+    } else {
+      e.n = 0;
+      e.nextDue = vrevAddDays(1);
+    }
+    e.last = new Date().toISOString();
+    return e;
+  }
+  // 本篇到期生词：标注 vocab 条目 ∩（无调度记录=新词即到期 / nextDue<=今天）
+  function vocabDueList(aid) {
+    let annos = [];
+    try { annos = JSON.parse(localStorage.getItem('annotations:' + aid) || '[]') || []; } catch (e) {}
+    const all = vrevAll();
+    const today = localDateStr(new Date());
+    const seen = {};
+    const out = [];
+    annos.forEach(a => {
+      if (!a || a.bucket !== 'vocab' || !a.text) return;
+      const w = String(a.text).trim();
+      const lw = w.toLowerCase();
+      if (!lw || seen[lw]) return;
+      const e = all[vrevKey(aid, lw)];
+      const due = !e || !e.nextDue || e.nextDue <= today;
+      if (!due) return;
+      seen[lw] = 1;
+      out.push({ word: w, lw: lw, paraIdx: String(a.paraIdx || ''), gloss: (e && e.gloss) || a.note || '', entryKey: vrevKey(aid, lw) });
+    });
+    return out;
+  }
+  function vocabDueCount(aid) { return vocabDueList(aid).length; }
+  // 渐退提示：连续答对 n 轮后金色高亮逐级变浅，3 轮后不再着色（词已进入长间隔）
+  function vrevStrengthOf(map, aid, lw) {
+    const tries = [lw];
+    if (lw.endsWith('s')) tries.push(lw.slice(0, -1), lw.slice(0, -2));
+    if (lw.endsWith('ed')) tries.push(lw.slice(0, -2), lw.slice(0, -1));
+    if (lw.endsWith('ing')) tries.push(lw.slice(0, -3), lw.slice(0, -3) + 'e');
+    for (let i = 0; i < tries.length; i++) {
+      const e = map[aid + '|' + tries[i]];
+      if (e) return e.n || 0;
+    }
+    return 0;
+  }
+  function vocabMaskActive() { try { return localStorage.getItem(VREV_ACTIVE_KEY) === articleId; } catch (e) { return false; } }
+  function vocabMaskClearFlag() { try { localStorage.removeItem(VREV_ACTIVE_KEY); localStorage.removeItem(VREV_MODE_KEY); } catch (e) {} }
+  let vrevWired = false;
+  let vrevScheduledKeys = {};
+  function vrevReveal(el, wasCorrect) {
+    const key = el.dataset.vrevKey;
+    if (el.tagName === 'MARK') el.classList.remove('vrev-mask');   // 恢复标注原色
+    else el.classList.replace('vrev-mask', 'vrev-open');
+    el.dataset.vrevDone = '1';
+    if (!vrevScheduledKeys[key]) {
+      vrevScheduledKeys[key] = 1;
+      const all = vrevAll();
+      all[key] = vocabSchedule(all[key], wasCorrect);
+      vrevSave(all);
+    }
+    vrevMaybeFinish();
+  }
+  function vrevMaybeFinish() {
+    if (!document.querySelector('.vrev-mask, .vrev-cloze')) {
+      vocabMaskClearFlag();
+      showTopToast('✅ 本轮生词复习完成，明天见');
+    }
+  }
+  function vocabMaskStop() {
+    document.querySelectorAll('.vrev-cloze').forEach(inp => {
+      const t = document.createTextNode(inp.dataset.vrevWord || '');
+      inp.parentNode.replaceChild(t, inp);
+    });
+    document.querySelectorAll('.vrev-mask').forEach(el => {
+      if (el.tagName === 'MARK') el.classList.remove('vrev-mask');
+      else { const t = document.createTextNode(el.textContent); el.parentNode.replaceChild(t, el); }
+    });
+    document.querySelectorAll('.col-body').forEach(b => b.normalize());
+    vocabMaskClearFlag();
+  }
+  function vocabMaskApply() {
+    const due = vocabDueList(articleId);
+    if (!due.length) { showTopToast('本篇没有到期的生词'); vocabMaskClearFlag(); return; }
+    const dueMap = {};
+    due.forEach(d => { dueMap[d.lw] = d; });
+    const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // 先处理标注 mark（正文里的 <mark> 整块涂黑，显形后恢复标注原色）
+    document.querySelectorAll('.col-body.en mark').forEach(mk => {
+      const txt = mk.textContent.toLowerCase().replace(/[^a-z'\- ]+/g, ' ').replace(/\s+/g, ' ').trim();
+      if (dueMap[txt] && !mk.classList.contains('vrev-mask')) {
+        mk.classList.add('vrev-mask');
+        mk.dataset.vrevKey = dueMap[txt].entryKey;
+        mk.dataset.vrevWord = dueMap[txt].word;
+      }
+    });
+    // 再处理未标注的普通文本节点（跳过 mark / 脚本 / 词频 span / 已涂黑块）
+    const bodies = document.querySelectorAll('.col-body.en');
+    const found = {};
+    bodies.forEach(body => {
+      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          let p = node.parentNode;
+          while (p && p !== body) {
+            if (p.nodeType === 1) {
+              const t = p.tagName;
+              if (t === 'MARK' || t === 'SCRIPT' || t === 'STYLE' || t === 'TEXTAREA') return NodeFilter.FILTER_REJECT;
+              if (p.classList && (p.classList.contains('vrev-mask') || p.classList.contains('vrev-cloze') || String(p.className).indexOf('freq-') === 0)) return NodeFilter.FILTER_REJECT;
+              if (p.getAttribute && p.getAttribute('contenteditable') === 'true') return NodeFilter.FILTER_REJECT;
+            }
+            p = p.parentNode;
+          }
+          return /[A-Za-z]/.test(node.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        }
+      });
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      nodes.forEach(tn => {
+        const text = tn.nodeValue;
+        let hit = null;
+        for (const lw in dueMap) {
+          const re = new RegExp('\\b' + escapeRe(lw) + '\\b', 'i');
+          if (re.test(text)) { hit = lw; break; }
+        }
+        if (!hit) return;
+        const d = dueMap[hit];
+        const re2 = new RegExp('\\b(' + escapeRe(hit) + ')\\b', 'i');
+        const m2 = re2.exec(text);
+        const frag = document.createDocumentFragment();
+        if (m2.index > 0) frag.appendChild(document.createTextNode(text.slice(0, m2.index)));
+        const sp = document.createElement('span');
+        sp.className = 'vrev-mask';
+        sp.dataset.vrevKey = d.entryKey;
+        sp.dataset.vrevWord = d.word;
+        sp.textContent = d.word;
+        frag.appendChild(sp);
+        if (m2.index + m2[0].length < text.length) frag.appendChild(document.createTextNode(text.slice(m2.index + m2[0].length)));
+        tn.parentNode.replaceChild(frag, tn);
+        found[hit] = 1;
+      });
+    });
+    let masked = document.querySelectorAll('.vrev-mask').length;
+    if (!masked) {
+      showTopToast('到期词在正文里没有找到原位（' + due.length + ' 词），已留待下轮');
+      vocabMaskClearFlag();
+      return;
+    }
+    if (!vrevWired) {
+      vrevWired = true;
+      document.addEventListener('click', e => {
+        const m = e.target.closest ? e.target.closest('.vrev-mask') : null;
+        if (m) vrevReveal(m, true);
+      });
+      document.addEventListener('contextmenu', e => {
+        const m = e.target.closest ? e.target.closest('.vrev-mask') : null;
+        if (m) { e.preventDefault(); vrevReveal(m, false); }
+      });
+    }
+    const missing = Math.max(0, due.length - Object.keys(found).length);
+    showTopToast('👁 遮盖复习开始：点击黑块=想起来了，右键=没想起来' + (missing > 0 ? '（' + missing + ' 词不在正文，留待下轮）' : ''));
+  }
+  // 段落填空：同段 ≥3 个到期词时，把词挖成输入框逐词键入（两错后显形）
+  function vocabClozeApply() {
+    const due = vocabDueList(articleId);
+    const byP = {};
+    due.forEach(d => { if (d.paraIdx !== '') (byP[d.paraIdx] = byP[d.paraIdx] || []).push(d); });
+    let done = 0;
+    Object.keys(byP).forEach(pi => {
+      const list = byP[pi];
+      if (list.length < 3) return;
+      const paras = document.querySelectorAll('.col-body.en p[data-para-idx="' + pi + '"]');
+      paras.forEach(p => {
+        list.forEach(d => {
+          const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT, {
+            acceptNode(node) {
+              let q = node.parentNode;
+              while (q && q !== p) {
+                if (q.nodeType === 1 && (q.tagName === 'MARK' || q.tagName === 'SCRIPT' || (q.classList && (q.classList.contains('vrev-cloze') || q.classList.contains('vrev-mask') || String(q.className).indexOf('freq-') === 0)))) return NodeFilter.FILTER_REJECT;
+                q = q.parentNode;
+              }
+              return new RegExp('\\b' + d.lw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i').test(node.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+            }
+          });
+          const tn = walker.nextNode();
+          if (!tn) return;
+          const re = new RegExp('\\b(' + d.lw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')\\b', 'i');
+          const m = re.exec(tn.nodeValue);
+          const frag = document.createDocumentFragment();
+          if (m.index > 0) frag.appendChild(document.createTextNode(tn.nodeValue.slice(0, m.index)));
+          const inp = document.createElement('input');
+          inp.className = 'vrev-cloze';
+          inp.dataset.vrevKey = d.entryKey;
+          inp.dataset.vrevWord = d.word;
+          inp.setAttribute('size', String(d.word.length + 3));
+          inp.setAttribute('autocomplete', 'off');
+          frag.appendChild(inp);
+          if (m.index + m[0].length < tn.nodeValue.length) frag.appendChild(document.createTextNode(tn.nodeValue.slice(m.index + m[0].length)));
+          tn.parentNode.replaceChild(frag, tn);
+          done++;
+        });
+      });
+    });
+    if (!done && !document.querySelectorAll('.vrev-cloze').length) {
+      showTopToast('没有可填空的段落（需要同段 ≥3 个到期词），改用遮盖模式');
+      try { localStorage.setItem(VREV_MODE_KEY, 'mask'); } catch (e) {}
+      vocabMaskApply();
+      return;
+    }
+    if (!vrevWired) {
+      vrevWired = true;
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('vrev-cloze')) { e.preventDefault(); vrevClozeCheck(e.target); }
+      });
+      document.addEventListener('focusout', e => {
+        if (e.target.classList && e.target.classList.contains('vrev-cloze') && e.target.value) vrevClozeCheck(e.target);
+      });
+    }
+    showTopToast('✍ 段落填空：键入被挖掉的词，回车判定');
+  }
+  function vrevClozeCheck(inp) {
+    if (inp.dataset.vrevDone) return;
+    const word = inp.dataset.vrevWord, key = inp.dataset.vrevKey;
+    const norm = s => String(s || '').toLowerCase().replace(/[^a-z'\-]/g, '');
+    if (norm(inp.value) === norm(word)) {
+      const sp = document.createElement('span');
+      sp.className = 'vrev-open';
+      sp.textContent = word;
+      inp.parentNode.replaceChild(sp, inp);
+      if (!vrevScheduledKeys[key]) {
+        vrevScheduledKeys[key] = 1;
+        const all = vrevAll();
+        all[key] = vocabSchedule(all[key], true);
+        vrevSave(all);
+      }
+    } else {
+      const miss = (+inp.dataset.miss || 0) + 1;
+      inp.dataset.miss = miss;
+      if (miss === 1) {
+        inp.classList.add('vrev-miss');
+        inp.value = '';
+        inp.placeholder = word.charAt(0) + '·'.repeat(Math.max(1, word.length - 1));
+      } else {
+        const sp = document.createElement('span');
+        sp.className = 'vrev-open';
+        sp.textContent = word;
+        inp.parentNode.replaceChild(sp, inp);
+        if (!vrevScheduledKeys[key]) {
+          vrevScheduledKeys[key] = 1;
+          const all = vrevAll();
+          all[key] = vocabSchedule(all[key], false);
+          vrevSave(all);
+        }
+      }
+    }
+    vrevMaybeFinish();
   }

@@ -954,3 +954,80 @@
   window.openDerivedCard = openDerivedCard;
   window.openStudyOverview = openStudyOverview;
   window.studyRows = studyRows;
+
+  // ===== v40: 跨篇生词遮盖复习（汇总所有文章的到期词 + 收件箱词快测）=====
+  // 行点击 → 设 wsj_vocabrev:active 标记并跳到那篇文章，由 10-toolbar.js 的初始化钩子上遮盖。
+  // 收件箱词（articleId='inbox'，来自 T03 词汇收件箱）没有原文语境，用「看中文键入英文」的
+  // 列表快测形态 —— 是表单不是翻卡，遵守闪卡红线。
+  function openVocabRevPanel() {
+    const p = insPanel('vrev-panel', '👁 生词遮盖复习');
+    const body = document.getElementById('vrev-panel-body');
+    const today = localDateStr(new Date());
+    const rows = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || k.indexOf('annotations:') !== 0) continue;
+      const aid = k.slice('annotations:'.length);
+      const due = vocabDueList(aid);
+      if (due.length) rows.push({ aid: aid, n: due.length });
+    }
+    rows.sort((a, b) => b.n - a.n);
+    let reg = [];
+    try { reg = JSON.parse(localStorage.getItem('wsj_reader:registry') || '[]') || []; } catch (e) {}
+    const titleOf = id => { const r = reg.find(x => x.id === id); return (r && r.title) ? r.title : id.replace(/_EN-CN_final\.html$/, '').replace(/_/g, ' '); };
+    const all = vrevAll();
+    const inbox = Object.keys(all).filter(k => k.indexOf('inbox|') === 0)
+      .map(k => ({ k: k, e: all[k], word: k.slice('inbox|'.length) }))
+      .filter(x => !x.e.nextDue || x.e.nextDue <= today);
+    let html = '';
+    if (rows.length) {
+      html += '<div class="ins-dim" style="margin-bottom:8px">到期生词按篇分布 —— 点「重读」跳过去，该篇到期词自动涂黑：点击=想起来了，右键=没想起来。</div>';
+      html += rows.map(r =>
+        '<div class="ins-row" style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--rule)">' +
+        '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(titleOf(r.aid)) + '</span>' +
+        '<span class="ins-tag">' + r.n + ' 词到期</span>' +
+        '<button type="button" class="ins-btn" data-vrev-go="' + esc(r.aid) + '">👁 重读</button></div>').join('');
+    } else {
+      html += '<div class="ins-dim" style="margin-bottom:8px">各篇文章都没有到期生词。标注过的词按间隔排期，到期会出现在这里。</div>';
+    }
+    html += '<div class="menu-sep" style="margin:12px 0"></div><div class="ins-dim">📥 收件箱词快测（看中文 → 键入英文）</div>';
+    if (!inbox.length) {
+      html += '<div class="ins-dim">收件箱暂无到期词。</div>';
+    } else {
+      html += inbox.map(x =>
+        '<div class="ins-row" data-vrevq="' + esc(x.k) + '" style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--rule)">' +
+        '<span style="flex:1;min-width:0">' + esc(x.e.gloss || '（无释义）') + '</span>' +
+        '<input type="text" class="vrev-q-input" data-vrevq-word="' + esc(x.word) + '" placeholder="英文" style="width:130px;border:1px solid var(--rule);border-radius:4px;padding:3px 6px;background:var(--panel-bg);color:var(--fg)">' +
+        '<button type="button" class="ins-btn" data-vrevq-check>查</button></div>').join('');
+    }
+    body.innerHTML = html;
+    body.querySelectorAll('[data-vrev-go]').forEach(b => b.addEventListener('click', () => {
+      try {
+        localStorage.setItem('wsj_vocabrev:active', b.dataset.vrevGo);
+        localStorage.setItem('wsj_vocabrev:mode', 'mask');
+      } catch (e) {}
+      location.href = b.dataset.vrevGo;
+    }));
+    body.querySelectorAll('[data-vrevq-check]').forEach(b => b.addEventListener('click', () => {
+      const row = b.closest('[data-vrevq]');
+      const inp = row.querySelector('.vrev-q-input');
+      const word = inp.dataset.vrevqWord;
+      const key = row.dataset.vrevq;
+      const norm = s => String(s || '').toLowerCase().replace(/[^a-z'\-]/g, '');
+      if (norm(inp.value) === norm(word)) {
+        row.style.opacity = '.45';
+        inp.disabled = true;
+        b.textContent = '✓';
+        const allNow = vrevAll();
+        allNow[key] = vocabSchedule(allNow[key], true);
+        vrevSave(allNow);
+      } else {
+        inp.value = '';
+        inp.placeholder = '再试一次（' + word.charAt(0) + '…）';
+        const allNow = vrevAll();
+        allNow[key] = vocabSchedule(allNow[key], false);
+        vrevSave(allNow);
+      }
+    }));
+    insOpen(p);
+  }

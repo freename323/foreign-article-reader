@@ -186,6 +186,8 @@
     'wsj_cloze:wrongs', 'wsj_newtype:wrongs', 'wsj_translation:wrongs',
     // 错题本的复习调度（间隔重复）—— 11-insights.js
     'wsj_wrongrev',
+    // 生词语境内复习的调度（v40，遮盖重读/段落填空）—— 07-wordfreq.js；漏了它复习进度全丢
+    'wsj_vocabrev',
     // 中译英默写：每题成绩 + 错词本 —— 12-dictation.js
     'wsj_dictation:stats', 'wsj_dictation:wrongs'];
   function collectAppKeys() {

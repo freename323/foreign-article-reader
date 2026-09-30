@@ -156,8 +156,11 @@
     // 4) 数据 —— 存下来 / 拿回来 / 导出去 / 看分析
     // 「错题本」与「能力雷达」都建立在既有数据上：4 个错题库 + wsj_exam:history 的逐题题型，
     // 所以它们属于「数据」这一组 —— 看的是已经攒下来的东西。
-    const wrongN = (typeof dueWrongCount === 'function') ? dueWrongCount() : 0;    const dataMenu =
+    const wrongN = (typeof dueWrongCount === 'function') ? dueWrongCount() : 0;
+    const vrevN = (typeof vocabDueCount === 'function') ? vocabDueCount(articleId) : 0;    const dataMenu =
       '<div class="menu-section-label">学习分析</div>' +
+      menuItemHTML('vrev-btn', '👁', vrevN > 0 ? '本篇生词遮盖复习（' + vrevN + ' 词到期）' : '本篇生词遮盖复习',
+        '到期生词回原文涂黑重读：点击黑块=想起来了，右键=没想起来；同段 3 词以上可用段落填空', '', vrevN > 0 ? 'due-hot' : '') +
       menuItemHTML('study-btn', '📚', '学习总览', '十篇文章一屏看完：进度 / 生词 / 长难句 / 素材 / 正确率 / 错题 / 默写') +
       menuItemHTML('wrongbook-btn', '📕', wrongN > 0 ? '错题本（' + wrongN + ' 道待复习）' : '错题本',
         '四个练习模块的错题汇总，按间隔重复安排复习，可就地重做', '', wrongN > 0 ? 'due-hot' : '') +
@@ -188,6 +191,7 @@
       menuItemHTML('dictation-btn', '🖊', '中译英默写', '看着本段中文译文默写英文原句，逐词比对、错词进错词本') +
       menuItemHTML('derived-btn', '🎯', '正文派生标注', '把你标注过的长难句 / 写作素材也标在原文上（点击看内容）') +
       '<div class="menu-sep"></div><div class="menu-section-label">复习</div>' +
+      menuItemHTML('vrev-cross-btn', '👁', '跨篇生词复习', '所有文章的到期生词汇总，逐篇遮盖重读；含收件箱词的快测') +
       menuItemHTML('review-due-btn', '🎯', dueN > 0 ? '今日待复习 ' + dueN + ' 条' : '复习生词（文库）', '到期生词与题型卡，跳转文库开始复习', '', dueN > 0 ? 'due-hot' : '') +
       '<div class="menu-sep"></div><div class="menu-section-label">AI 助手（右侧分屏）</div>' +
       menuItemHTML('ai-zhipu-btn', '🤖', '智谱清言') +
@@ -256,6 +260,24 @@
     // 考试模式各模块（按本篇 data-exam-types 动态绑定）
     examModulesAvailable().forEach(m => on('exam-mod-' + m.key, () => examModuleOpen(m)));
     on('review-due-btn', openHub);
+    on('vrev-cross-btn', () => openVocabRevPanel());
+    // 本篇遮盖复习：开/关切换。开启时同段 ≥3 词提供填空选项，否则直接遮盖
+    on('vrev-btn', () => {
+      if (vocabMaskActive() || document.querySelector('.vrev-mask, .vrev-cloze')) {
+        vocabMaskStop();
+        showTopToast('已退出本篇生词复习');
+        return;
+      }
+      const due = vocabDueList(articleId);
+      if (!due.length) { showTopToast('本篇没有到期的生词（标注过的词按间隔回到这里）'); return; }
+      const paraCount = {};
+      due.forEach(d => { if (d.paraIdx !== '') paraCount[d.paraIdx] = (paraCount[d.paraIdx] || 0) + 1; });
+      const clozeEligible = Object.keys(paraCount).filter(k => paraCount[k] >= 3).length;
+      let mode = 'mask';
+      if (clozeEligible > 0 && confirm('有 ' + clozeEligible + ' 段含 3 个以上到期词，用段落填空模式吗？\n（确定=填空键入，取消=遮盖点击）')) mode = 'cloze';
+      try { localStorage.setItem(VREV_ACTIVE_KEY, articleId); localStorage.setItem(VREV_MODE_KEY, mode); } catch (e) {}
+      if (mode === 'cloze') vocabClozeApply(); else vocabMaskApply();
+    });
     on('ai-zhipu-btn', () => openAISide('zhipu'));
     on('ai-qwen-btn', () => openAISide('qwen'));
     on('hub-btn', openHub);
@@ -355,6 +377,15 @@
     // F01：长难句 / 素材的派生标注（与上面的段落标签同属「段落装饰」，
     // 都必须在 reapplyAllHighlights / 词频着色之后做，否则会被它们的 DOM 重写冲掉）
     renderDerivedMarks();
+    // v40: 跨篇复习带 flag 跳进来时（wsj_vocabrev:active = 本篇），等高亮/派生标注落定后再上遮盖
+    setTimeout(() => {
+      try {
+        if (vocabMaskActive()) {
+          const mode = localStorage.getItem('wsj_vocabrev:mode') || 'mask';
+          if (mode === 'cloze') vocabClozeApply(); else vocabMaskApply();
+        }
+      } catch (e) {}
+    }, 900);
     // 从别的页面带 #para-N 跳进来时定位（等报纸版建好再跳，见 initHashJump）
     initHashJump();
     // 其余运行时注入（UX-3 移动端列切换条、UX-8 搜索选项等）——文章 HTML 本体不动
