@@ -2078,7 +2078,21 @@ body.paper-open .notes-section {
   font-family: var(--np-sans);
   overflow: hidden;
 }
-body.paper-open .notes-section.collapsed { display: none !important; }
+/* v35: 折叠态不再整个消失 —— 收成右上角一条操作条，「展开」按钮常驻可点 */
+body.paper-open .notes-section.collapsed {
+  display: flex !important;
+  bottom: auto; height: auto;
+  width: auto; max-width: min(470px, 94vw);
+  box-shadow: -4px 4px 0 rgba(15,21,28,.10);
+}
+body.paper-open .notes-section.collapsed header {
+  padding: 4px 10px;
+  border-bottom: none;
+}
+body.paper-open .notes-section.collapsed header h3 { display: none; }
+body.paper-open .notes-section.collapsed header .actions { margin: 0; flex-wrap: nowrap; }
+body.paper-open .notes-section.collapsed .notes-list,
+body.paper-open .notes-section.collapsed .notes-tabs { display: none !important; }
 body.paper-open .notes-section header {
   /* 基础样式是横排（栏名 + 按钮同行），报纸版改成「栏名在上、操作条在下」的两段式 */
   display: block; flex: 0 0 auto;

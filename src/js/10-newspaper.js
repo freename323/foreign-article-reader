@@ -538,7 +538,7 @@
         ? '<button type="button" class="np-btn np-exam" id="np-exam" title="考试模式：阅读理解 / 完形填空 / 新题型 / 翻译练习 / 写作">🎓 考试</button>'
         : '') +
       '<button type="button" class="np-btn" id="np-sum" title="展开/收起导读摘要">导读</button>' +
-      '<button type="button" class="np-btn" id="np-notes" title="展开/收起剪报本（笔记与生词）">笔记</button>' +
+      // v35: 「笔记」开关已移除 —— 剪报本只由面板上的折叠/展开按钮控制（折叠后收成窄条常驻）
       '<button type="button" class="np-btn" id="np-cols" title="切换栏数：1 / 2 / 3 栏">栏 2</button>' +
       '<button type="button" class="np-btn" id="np-sd" title="缩小字号">A−</button>' +
       '<button type="button" class="np-btn" id="np-su" title="放大字号">A+</button>' +
@@ -611,12 +611,7 @@
     rootEl.querySelector('#np-lang-en').addEventListener('click', () => paperSetLang('en'));
     rootEl.querySelector('#np-lang-cn').addEventListener('click', () => paperSetLang('cn'));
     rootEl.querySelector('#np-sum').addEventListener('click', () => { paperSumOpen = !paperSumOpen; paperApplyLayout(); });
-    rootEl.querySelector('#np-notes').addEventListener('click', () => {
-      paperNotesOpen = !paperNotesOpen;
-      // 展开时刷新一次列表（标注可能刚改过）
-      if (paperNotesOpen && typeof renderNotes === 'function') renderNotes();
-      paperApplyLayout();
-    });
+    // v35: #np-notes 开关已移除（剪报本由面板上的折叠按钮唯一控制）
     rootEl.querySelector('#np-sd').addEventListener('click', () => paperBumpFont(-1));
     rootEl.querySelector('#np-su').addEventListener('click', () => paperBumpFont(1));
     rootEl.querySelector('#np-cols').addEventListener('click', () => paperCycleCols());
@@ -709,13 +704,14 @@
 
   // 报纸模式下把「标题区 / 概要 / 中文 / 笔记」的显隐同步到报纸版式
   // repaginate=false 用于「正在分版中」的调用，避免互相触发成死循环
-  // ⚠ 「导读」与「剪报本」两个抽屉都用独立的运行时状态（paperSumOpen / paperNotesOpen），
-  //   **默认都是关闭的**、不跟 settings.showSummary / settings.showNotes 走：
-  //   后两者默认 true（三栏视图默认显示概要列与笔记条），若沿用就会一进报纸版
-  //   两个抽屉自己拉开、盖住半边纸面 —— 报纸阅读页一打开应该就是干干净净一张报。
+  // ⚠ 「导读」抽屉用独立的运行时状态（paperSumOpen），**默认是关闭的**、
+  //   不跟 settings.showSummary 走：它默认 true（三栏视图默认显示概要列），
+  //   若沿用就会一进报纸版导读自己拉开、盖住半边纸面。
+  // v35: 剪报本不再有第二套状态 —— 折叠态只归面板上的折叠按钮（settings.showNotes）管，
+  //   这里不再用 paperNotesOpen 反写 .collapsed（旧版会把用户刚折起来的面板又弹开）。
   let paperBuilding = false;
   let paperSumOpen = false;
-  let paperNotesOpen = false;
+  let paperNotesPrevCollapsed = false; // v35: 进报纸版前的剪报本折叠态（退出时还原）
   function paperApplyLayout(repaginate) {
     const root = document.getElementById('paper-root');
     if (!root) return;
@@ -729,10 +725,6 @@
     if (sm) sm.classList.toggle('active', paperSumOpen);
     const col = document.querySelector('.summary-col');
     if (col) col.classList.toggle('np-open', paperSumOpen);
-    const nb = root.querySelector('#np-notes');
-    if (nb) nb.classList.toggle('active', paperNotesOpen);
-    const ns = document.querySelector('.notes-section');
-    if (ns) ns.classList.toggle('collapsed', !paperNotesOpen);
     // 标题区一收，正文可用高度就变了，必须重新分版
     if (headChanged && repaginate !== false && !paperBuilding) {
       if (typeof window.__paperRepaginate === 'function') window.__paperRepaginate();
@@ -747,6 +739,10 @@
     if (!paperRestore) return false;
     paperEnsureRoot();
     document.body.classList.add('paper-open');
+    // v35: 报纸版要一张干净的纸面 —— 进版先把剪报本折起来，退出时还原进版前的折叠态
+    const ns = document.querySelector('.notes-section');
+    paperNotesPrevCollapsed = ns ? ns.classList.contains('collapsed') : false;
+    if (ns) ns.classList.add('collapsed');
     const cap = paperRestore;
     // 原列交给报纸接管：摘掉 col-body 类并清空，避免选择器出现两个同名容器
     cap.en.className = 'np-source';
@@ -789,11 +785,10 @@
     document.body.classList.remove('paper-open');
     clearTimeout(paperTurnTimer);
     paperSumOpen = false;
-    paperNotesOpen = false;
     document.querySelector('.summary-col')?.classList.remove('np-open');
-    // 笔记条在三栏视图里由 settings.showNotes 决定，退出报纸版要还原回去
+    // v35: 还原进版前的剪报本折叠态（报纸版期间用户怎么折/展，以进版前为准）
     const nsBack = document.querySelector('.notes-section');
-    if (nsBack) nsBack.classList.toggle('collapsed', !settings.showNotes);
+    if (nsBack) nsBack.classList.toggle('collapsed', paperNotesPrevCollapsed);
     updatePaperButtons();
     // 三栏视图恢复后需要重新对齐列高
     lastSyncedWidth = -1;

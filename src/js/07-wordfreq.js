@@ -355,8 +355,7 @@
   function locateNoteFromMark(id) {
     const a = annotations.find(x => x.id === id);
     if (!a) return;
-    const sec = document.querySelector('.notes-section');
-    if (sec && sec.classList.contains('collapsed') && typeof toggleNotes === 'function') toggleNotes();
+    // v35: 面板折叠时不再自动展开 —— 定位/闪烁只发生在面板当前状态里
     if (!document.querySelector('.note-card[data-id="' + id + '"]')) {
       notesBucket = a.bucket || 'all';
       renderNotes();

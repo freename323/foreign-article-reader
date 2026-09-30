@@ -277,8 +277,7 @@ def build_html(art, out_dir=None):
   <button class="toolbar-btn arrow" id="menu-left-btn" onclick="toggleMenu('left')" title="视图设置（字号/主题）">⚙ <span>▾</span></button>
   <button class="toolbar-btn active" id="toggle-summary-btn" onclick="toggleSummary()" title="显示/隐藏概要列" style="background:#f0e6c8;color:#7a5a07;font-weight:600;">📌 概要</button>
   <button class="toolbar-btn active" id="toggle-cn-btn" onclick="toggleCN()" title="显示/隐藏中文列" style="background:#dfe7f5;color:#1a365d;font-weight:600;">🀄 中文</button>
-  <button class="toolbar-btn" id="open-vocab-btn" onclick="openNotes('vocab')" title="打开生词本" style="background:#cfe2ff;color:#1a365d;font-weight:600;">📖 生词</button>
-  <button class="toolbar-btn" id="open-note-btn" onclick="openNotes('note')" title="打开笔记" style="background:#d4f4dd;color:#1c4532;font-weight:600;">📝 笔记</button>
+  <!-- v35: 「📖 生词 / 📝 笔记」打开按钮已移除 —— 剪报本只保留面板上的折叠/展开一个开关 -->
   <span class="title inline-stats trans-count note-count">{en_title} / {cn_title}<span><span title="已修改的中文段落数">✏️译<span id="trans-count"></span></span> <span title="标注数量">📌<span id="note-count"></span></span></span></span>
   <div class="toolbar-right">
     <span class="toolbar-clock-area">
@@ -374,7 +373,7 @@ def build_html(art, out_dir=None):
       <button onclick="clearAllAnnotations()" title="清空标注">🗑</button>
       <button onclick="resetAll()" title="清空所有数据">⚠</button>
       <button onclick="extractVocab()" title="一键提取生词和解释到剪贴板" style="background:#e8f5e9;border-color:#81c784;">📋 提取</button>
-      <button class="close-notes" onclick="toggleNotes()" title="关闭/展开笔记面板" style="color: var(--cn-tag);">× 关</button>
+      <button class="close-notes" onclick="toggleNotes()" title="折叠笔记面板" style="color: var(--cn-tag);">▸ 折叠</button>
     </div>
   </header>
   <div class="notes-list" id="notes-list"></div>

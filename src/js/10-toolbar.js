@@ -334,7 +334,6 @@
     initTranslation();
     reapplyAllHighlights();
     renderNotes();
-    updateNotesButtons();
     syncToRegistry();
     setupScrollSync();
     setupFloatMenu();
@@ -439,7 +438,6 @@
   window.toggleCN = toggleCN;
   window.toggleHeader = toggleHeader;
   window.toggleNotes = toggleNotes;
-  window.openNotes = openNotes;
   window.resetSummary = resetSummary;
   window.resetTranslation = resetTranslation;
   window.clearAllAnnotations = clearAllAnnotations;

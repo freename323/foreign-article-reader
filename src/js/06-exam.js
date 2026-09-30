@@ -185,9 +185,7 @@
     const clean = text.trim();
     const dup = annotations.find(a => a.bucket === 'qtype' && a.qtype === qtype && a.text === clean);
     if (dup) {
-      settings.showNotes = true; saveSettings();
-      const sec = document.querySelector('.notes-section');
-      if (sec) sec.classList.remove('collapsed');
+      // v35: 不再强制展开面板 —— 折叠时就静默落卡，展开动作只归面板上的折叠按钮管
       setNotesBucket('qtype');
       flashNote(dup.id);
       return;
@@ -212,10 +210,7 @@
     updateNoteCount();
     if (R.renderNotes) R.renderNotes();
     showTopToast('已标注');
-    // Reveal it in the 题型 tab
-    settings.showNotes = true; saveSettings();
-    const sec = document.querySelector('.notes-section');
-    if (sec) sec.classList.remove('collapsed');
+    // Reveal it in the 题型 tab（v35: 只切页签，不强制展开面板）
     setNotesBucket('qtype');
   }
 

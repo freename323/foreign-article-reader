@@ -20,7 +20,6 @@
     });
     jumpNavIdx = 0;
     renderNotes();
-    updateNotesButtons();
   }
   function getFilteredSorted() {
     const bucketAnns = notesBucket === 'all' ? annotations : annotations.filter(a => a.bucket === notesBucket);

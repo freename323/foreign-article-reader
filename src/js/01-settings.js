@@ -41,49 +41,17 @@
   function toggleSummary() { settings.showSummary = !settings.showSummary; saveSettings(); applyLayout(); showTopToast(settings.showSummary ? '概要列已显示' : '概要列已隐藏'); setTimeout(() => window.__resyncScroll && window.__resyncScroll(), 50); }
   function toggleCN() { settings.showCN = !settings.showCN; saveSettings(); applyLayout(); showTopToast(settings.showCN ? '中文列已显示' : '中文列已隐藏'); setTimeout(() => window.__resyncScroll && window.__resyncScroll(), 50); }
   function toggleHeader() { settings.showHeader = !settings.showHeader; saveSettings(); applyLayout(); showTopToast(settings.showHeader ? '标题区已显示' : '标题区已隐藏'); setTimeout(() => window.__resyncScroll && window.__resyncScroll(), 50); }
+  // v35: 剪报本唯一的开关 —— 只做折叠/展开（折叠 = 收成 38px 工具条，按钮仍可点）。
+  // 过去的「× 关」+ 工具栏打开按钮 + 报纸版 paperNotesOpen 三套状态互相打架，
+  // 现在只留这一个入口，其余打开路径全部移除。
   function toggleNotes() {
     settings.showNotes = !settings.showNotes; saveSettings();
     const sec = document.querySelector('.notes-section');
     sec.classList.toggle('collapsed', !settings.showNotes);
-    const nb = document.getElementById('toggle-notes-btn');
-    if (nb) nb.classList.toggle('active', settings.showNotes);
+    const btn = sec.querySelector('.close-notes');
+    if (btn) {
+      btn.textContent = settings.showNotes ? '▸ 折叠' : '▾ 展开';
+      btn.title = settings.showNotes ? '折叠笔记面板' : '展开笔记面板';
+    }
     showTopToast(settings.showNotes ? '笔记面板已展开' : '笔记面板已折叠');
-    updateNotesButtons();
-  }
-  // Direct open or toggle: if already showing this bucket, close; otherwise open & switch
-  function openNotes(bucket) {
-    if (settings.showNotes && notesBucket === bucket) {
-      settings.showNotes = false; saveSettings();
-      document.querySelector('.notes-section').classList.add('collapsed');
-    } else {
-      const wasCollapsed = !settings.showNotes;
-      if (wasCollapsed) {
-        settings.showNotes = true; saveSettings();
-        document.querySelector('.notes-section').classList.remove('collapsed');
-      }
-      if (bucket) setNotesBucket(bucket);
-      if (wasCollapsed) {
-        const sec = document.querySelector('.notes-section');
-        if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'end' });
-      }
-    }
-    updateNotesButtons();
-  }
-  function updateNotesButtons() {
-    const vb = document.getElementById('open-vocab-btn');
-    const nb = document.getElementById('open-note-btn');
-    if (vb) {
-      const on = settings.showNotes && notesBucket === 'vocab';
-      vb.classList.toggle('active', on);
-      vb.style.background = on ? '#cfe2ff' : '';
-      vb.style.color = on ? '#1a365d' : '';
-      vb.style.fontWeight = on ? '600' : '';
-    }
-    if (nb) {
-      const on = settings.showNotes && notesBucket === 'note';
-      nb.classList.toggle('active', on);
-      nb.style.background = on ? '#d4f4dd' : '';
-      nb.style.color = on ? '#1c4532' : '';
-      nb.style.fontWeight = on ? '600' : '';
-    }
   }
