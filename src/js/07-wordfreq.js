@@ -1,6 +1,14 @@
   // ===== FEATURE: Word-frequency tiered coloring (词频分级着色) =====
   const FREQ_MODE_KEY = 'wsj_reader:freqmode';
   let freqSets = null;
+  // v44: 三态 —— all 全部着色 / mine 只看生词（词频五级退场，只留 freq-v 金）/ off 关闭。
+  // 旧值兼容：'1'→all，'0'/未设置→off（词频着色本来就是主动开启的功能）。
+  function freqMode() {
+    const v = localStorage.getItem(FREQ_MODE_KEY);
+    if (v === 'mine' || v === 'off') return v;
+    return v === '1' ? 'all' : 'off';
+  }
+  function freqModeOn() { return freqMode() === 'all'; }
   function buildFreqSets() {
     if (freqSets) return freqSets;
     const d = window.__WORD_FREQ__;
@@ -93,10 +101,13 @@
           vrevFade = vrevStrengthOf(vrevMap, articleId, lw);
           if (vrevFade < 3) tier = 'v';
         }
-        else if (sets.h.has(lw)) tier = 'h';
-        else if (sets.m.has(lw)) tier = 'm';
-        else if (sets.l.has(lw)) tier = 'l';
-        else if (!sets.b.has(lw) && !sets.o.has(lw)) tier = 'x';
+        // v44 mine 态：只看生词 —— 词频五级退场，只留 freq-v 金（和 T04 衔接模式同思路的颜色分层）
+        else if (freqMode() !== 'mine') {
+          if (sets.h.has(lw)) tier = 'h';
+          else if (sets.m.has(lw)) tier = 'm';
+          else if (sets.l.has(lw)) tier = 'l';
+          else if (!sets.b.has(lw) && !sets.o.has(lw)) tier = 'x';
+        }
         if (tier) {
           const sp = document.createElement('span');
           sp.className = 'freq-' + tier;
@@ -129,24 +140,32 @@
     removeFreqColoring();
     applyFreqColoring();
   }
+  // v44: 三态循环 off → all → mine → off
   function toggleFreqColoring() {
-    const on = !freqModeOn();
-    localStorage.setItem(FREQ_MODE_KEY, on ? '1' : '0');
+    const mode = freqMode();
+    const next = mode === 'off' ? 'all' : (mode === 'all' ? 'mine' : 'off');
+    localStorage.setItem(FREQ_MODE_KEY, next);
     updateFreqBtn();
-    if (!on) {
+    if (next === 'off') {
       removeFreqColoring();
-      showTopToast('已关闭词频着色');
+      showTopToast('词频着色已关闭');
       return;
     }
     ensureWordFreq(() => {
+      removeFreqColoring();
       const counts = applyFreqColoring();
-      if (counts) showTopToast('词频着色已开启 · 高频 ' + counts.h + ' · 中频 ' + counts.m + ' · 低频 ' + counts.l + ' · 超纲 ' + counts.x +
-        (counts.v > 0 ? ' · 已录生词 ' + counts.v + '（金色）' : ''));
+      if (counts) showTopToast(next === 'mine'
+        ? '只看生词：已标注词着金，词频五级退场'
+        : '词频着色已开启 · 高频 ' + counts.h + ' · 中频 ' + counts.m + ' · 低频 ' + counts.l + ' · 超纲 ' + counts.x +
+          (counts.v > 0 ? ' · 已录生词 ' + counts.v + '（金色）' : ''));
     });
   }
   function updateFreqBtn() {
     const btn = document.getElementById('freq-toggle-btn');
-    if (btn) btn.innerHTML = '<span>🎨</span><span>词频着色 ' + (freqModeOn() ? '✓ 开' : '关') + '</span>';
+    if (btn) {
+      const label = freqMode() === 'all' ? '✓ 全部' : (freqMode() === 'mine' ? '✓ 只看生词' : '关');
+      btn.innerHTML = '<span>🎨</span><span>词频着色 ' + label + '</span>';
+    }
   }
 
   // ===== FEATURE: Reading statistics panel (阅读统计) =====

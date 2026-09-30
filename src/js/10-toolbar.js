@@ -393,7 +393,7 @@
     wireMarkClickLocate();
     setupNotesSearch();
     wireRootSuggest();
-    if (freqModeOn()) ensureWordFreq(() => applyFreqColoring());
+    if (freqMode() !== 'off') ensureWordFreq(() => applyFreqColoring());
     setupEditUndo();
     setupMobileColBar();
     // Progress bar

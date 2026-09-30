@@ -307,6 +307,9 @@
   }
 
   // ===== FEATURE: Notes-panel search (标注内容过滤，跨所有 tab) =====
+  // v44 性能改造：搜索过去每敲一键就 renderNotes() 全量重建（O(全部卡) 渲染 × 每键 = 输入卡顿）。
+  // 现在：300ms 防抖；两个非空 query 之间只做 DOM 显隐过滤（不重建不重绑），
+  // 空↔非空转变（结构会变）才走全量 renderNotes()。
   function setupNotesSearch() {
     const actions = document.querySelector('.notes-section header .actions');
     if (!actions || document.getElementById('notes-search-input')) return;
@@ -316,9 +319,20 @@
     input.className = 'notes-search';
     input.placeholder = '🔍 搜标注…';
     input.title = '在生词 / 笔记 / 题型卡里搜词句、释义、上下文、标签（Esc 清空）';
+    let searchTimer = null;
+    let lastFullQuery = null;   // 上一次全量渲染对应的 query（增量过滤的前置校验）
     input.addEventListener('input', () => {
-      noteSearchQuery = input.value.trim().toLowerCase();
-      renderNotes();
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        const prev = noteSearchQuery;
+        noteSearchQuery = input.value.trim().toLowerCase();
+        if (noteSearchQuery && prev && lastFullQuery === prev) {
+          vrevFilterNoteCards(input.value.trim());
+        } else {
+          renderNotes();
+        }
+        lastFullQuery = noteSearchQuery;
+      }, 300);
     });
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
@@ -330,4 +344,26 @@
       }
     });
     actions.insertBefore(input, actions.firstChild);
+  }
+  // 就地过滤：按卡片可见文本显隐（不重建 DOM）。只在「两个非空 query 之间」使用，
+  // 边界情况（页签切换 / 清空 / 结构变化）一律回到 renderNotes() 权威路径。
+  function vrevFilterNoteCards(q) {
+    const list = document.getElementById('notes-list');
+    if (!list) return;
+    const cards = list.querySelectorAll('.note-card');
+    let hits = 0;
+    cards.forEach(c => {
+      const match = !q || c.textContent.toLowerCase().indexOf(q.toLowerCase()) >= 0;
+      c.style.display = match ? '' : 'none';
+      if (match) hits++;
+    });
+    let hint = document.getElementById('notes-filter-hint');
+    if (!hint) {
+      hint = document.createElement('div');
+      hint.id = 'notes-filter-hint';
+      hint.style.cssText = 'font-size:11px;color:var(--muted);padding:2px 8px;';
+      const first = list.firstElementChild ? list.firstElementChild.nextSibling : null;
+      list.insertBefore(hint, first);
+    }
+    hint.textContent = '过滤 ' + hits + ' / ' + cards.length + ' 条匹配「' + q + '」（清空搜索框恢复全部）';
   }

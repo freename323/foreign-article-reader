@@ -745,6 +745,9 @@
   }
 
   // ===== FEATURE: Notes-panel search (标注内容过滤，跨所有 tab) =====
+  // v44 性能改造：搜索过去每敲一键就 renderNotes() 全量重建（O(全部卡) 渲染 × 每键 = 输入卡顿）。
+  // 现在：300ms 防抖；两个非空 query 之间只做 DOM 显隐过滤（不重建不重绑），
+  // 空↔非空转变（结构会变）才走全量 renderNotes()。
   function setupNotesSearch() {
     const actions = document.querySelector('.notes-section header .actions');
     if (!actions || document.getElementById('notes-search-input')) return;
@@ -754,9 +757,20 @@
     input.className = 'notes-search';
     input.placeholder = '🔍 搜标注…';
     input.title = '在生词 / 笔记 / 题型卡里搜词句、释义、上下文、标签（Esc 清空）';
+    let searchTimer = null;
+    let lastFullQuery = null;   // 上一次全量渲染对应的 query（增量过滤的前置校验）
     input.addEventListener('input', () => {
-      noteSearchQuery = input.value.trim().toLowerCase();
-      renderNotes();
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        const prev = noteSearchQuery;
+        noteSearchQuery = input.value.trim().toLowerCase();
+        if (noteSearchQuery && prev && lastFullQuery === prev) {
+          vrevFilterNoteCards(input.value.trim());
+        } else {
+          renderNotes();
+        }
+        lastFullQuery = noteSearchQuery;
+      }, 300);
     });
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
@@ -768,6 +782,28 @@
       }
     });
     actions.insertBefore(input, actions.firstChild);
+  }
+  // 就地过滤：按卡片可见文本显隐（不重建 DOM）。只在「两个非空 query 之间」使用，
+  // 边界情况（页签切换 / 清空 / 结构变化）一律回到 renderNotes() 权威路径。
+  function vrevFilterNoteCards(q) {
+    const list = document.getElementById('notes-list');
+    if (!list) return;
+    const cards = list.querySelectorAll('.note-card');
+    let hits = 0;
+    cards.forEach(c => {
+      const match = !q || c.textContent.toLowerCase().indexOf(q.toLowerCase()) >= 0;
+      c.style.display = match ? '' : 'none';
+      if (match) hits++;
+    });
+    let hint = document.getElementById('notes-filter-hint');
+    if (!hint) {
+      hint = document.createElement('div');
+      hint.id = 'notes-filter-hint';
+      hint.style.cssText = 'font-size:11px;color:var(--muted);padding:2px 8px;';
+      const first = list.firstElementChild ? list.firstElementChild.nextSibling : null;
+      list.insertBefore(hint, first);
+    }
+    hint.textContent = '过滤 ' + hits + ' / ' + cards.length + ' 条匹配「' + q + '」（清空搜索框恢复全部）';
   }
 
 ﻿  // ===== Sync EN/CN blockquote heights (sidebar before paragraph 1) =====
@@ -1434,6 +1470,14 @@
   // ===== FEATURE: Word-frequency tiered coloring (词频分级着色) =====
   const FREQ_MODE_KEY = 'wsj_reader:freqmode';
   let freqSets = null;
+  // v44: 三态 —— all 全部着色 / mine 只看生词（词频五级退场，只留 freq-v 金）/ off 关闭。
+  // 旧值兼容：'1'→all，'0'/未设置→off（词频着色本来就是主动开启的功能）。
+  function freqMode() {
+    const v = localStorage.getItem(FREQ_MODE_KEY);
+    if (v === 'mine' || v === 'off') return v;
+    return v === '1' ? 'all' : 'off';
+  }
+  function freqModeOn() { return freqMode() === 'all'; }
   function buildFreqSets() {
     if (freqSets) return freqSets;
     const d = window.__WORD_FREQ__;
@@ -1526,10 +1570,13 @@
           vrevFade = vrevStrengthOf(vrevMap, articleId, lw);
           if (vrevFade < 3) tier = 'v';
         }
-        else if (sets.h.has(lw)) tier = 'h';
-        else if (sets.m.has(lw)) tier = 'm';
-        else if (sets.l.has(lw)) tier = 'l';
-        else if (!sets.b.has(lw) && !sets.o.has(lw)) tier = 'x';
+        // v44 mine 态：只看生词 —— 词频五级退场，只留 freq-v 金（和 T04 衔接模式同思路的颜色分层）
+        else if (freqMode() !== 'mine') {
+          if (sets.h.has(lw)) tier = 'h';
+          else if (sets.m.has(lw)) tier = 'm';
+          else if (sets.l.has(lw)) tier = 'l';
+          else if (!sets.b.has(lw) && !sets.o.has(lw)) tier = 'x';
+        }
         if (tier) {
           const sp = document.createElement('span');
           sp.className = 'freq-' + tier;
@@ -1562,24 +1609,32 @@
     removeFreqColoring();
     applyFreqColoring();
   }
+  // v44: 三态循环 off → all → mine → off
   function toggleFreqColoring() {
-    const on = !freqModeOn();
-    localStorage.setItem(FREQ_MODE_KEY, on ? '1' : '0');
+    const mode = freqMode();
+    const next = mode === 'off' ? 'all' : (mode === 'all' ? 'mine' : 'off');
+    localStorage.setItem(FREQ_MODE_KEY, next);
     updateFreqBtn();
-    if (!on) {
+    if (next === 'off') {
       removeFreqColoring();
-      showTopToast('已关闭词频着色');
+      showTopToast('词频着色已关闭');
       return;
     }
     ensureWordFreq(() => {
+      removeFreqColoring();
       const counts = applyFreqColoring();
-      if (counts) showTopToast('词频着色已开启 · 高频 ' + counts.h + ' · 中频 ' + counts.m + ' · 低频 ' + counts.l + ' · 超纲 ' + counts.x +
-        (counts.v > 0 ? ' · 已录生词 ' + counts.v + '（金色）' : ''));
+      if (counts) showTopToast(next === 'mine'
+        ? '只看生词：已标注词着金，词频五级退场'
+        : '词频着色已开启 · 高频 ' + counts.h + ' · 中频 ' + counts.m + ' · 低频 ' + counts.l + ' · 超纲 ' + counts.x +
+          (counts.v > 0 ? ' · 已录生词 ' + counts.v + '（金色）' : ''));
     });
   }
   function updateFreqBtn() {
     const btn = document.getElementById('freq-toggle-btn');
-    if (btn) btn.innerHTML = '<span>🎨</span><span>词频着色 ' + (freqModeOn() ? '✓ 开' : '关') + '</span>';
+    if (btn) {
+      const label = freqMode() === 'all' ? '✓ 全部' : (freqMode() === 'mine' ? '✓ 只看生词' : '关');
+      btn.innerHTML = '<span>🎨</span><span>词频着色 ' + label + '</span>';
+    }
   }
 
   // ===== FEATURE: Reading statistics panel (阅读统计) =====
@@ -6336,7 +6391,7 @@
     wireMarkClickLocate();
     setupNotesSearch();
     wireRootSuggest();
-    if (freqModeOn()) ensureWordFreq(() => applyFreqColoring());
+    if (freqMode() !== 'off') ensureWordFreq(() => applyFreqColoring());
     setupEditUndo();
     setupMobileColBar();
     // Progress bar
