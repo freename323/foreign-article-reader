@@ -59,6 +59,20 @@
     try { const s = localStorage.getItem(SUM_KEY); if (s) summaryData = JSON.parse(s); } catch(e) { summaryData = {}; }
     try { const t = localStorage.getItem(TRANS_KEY); if (t) translationData = JSON.parse(t); } catch(e) { translationData = {}; }
     try { const st = localStorage.getItem(SETTINGS_KEY); if (st) Object.assign(settings, JSON.parse(st)); } catch(e) {}
+    // v37: 主题全局化 —— wsj_exam:theme 是唯一事实源（文章页 / 文库共用同一个键）。
+    //   过去文章页主题按篇存在 settings:<articleId> 里、文库读写 wsj_exam:theme，两边互不相认。
+    //   一次性迁移：以「当前文章的主题」为准播种（文章主题是基准），覆盖文库旧值；
+    //   之后任何一边切换主题都回写这个键，另一边启动时采纳（最后选择者生效）。
+    const THEME_VALID = ['light', 'dark', 'green', 'blue-gold', 'system'];
+    try {
+      if (!localStorage.getItem('wsj_reader:themeGlobal')) {
+        localStorage.setItem('wsj_reader:themeGlobal', '1');
+        localStorage.setItem('wsj_exam:theme', settings.theme);
+      } else {
+        const t = localStorage.getItem('wsj_exam:theme');
+        if (t && THEME_VALID.indexOf(t) >= 0 && t !== settings.theme) { settings.theme = t; saveSettings(); }
+      }
+    } catch (e) {}
     // 一次性迁移：旧默认「跟随系统」→「绿金」（新默认主题）。显式选过暗色/亮色的不受影响
     if (!localStorage.getItem('wsj_reader:themeMigrated')) {
       try { localStorage.setItem('wsj_reader:themeMigrated', '1'); } catch (e) {}

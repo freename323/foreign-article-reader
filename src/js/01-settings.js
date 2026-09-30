@@ -1,6 +1,7 @@
   // ===== Settings: theme / size / layout =====
   function setTheme(t) {
     settings.theme = t; saveSettings();
+    try { localStorage.setItem('wsj_exam:theme', t); } catch (e) {} // v37: 全局同步 —— 文库和其他文章页启动时采纳
     if (t === 'system') { document.documentElement.removeAttribute('data-theme'); }
     else { document.documentElement.setAttribute('data-theme', t); }
     const themeNames = { green: '🌿 绿金主题', light: '亮色主题', dark: '暗色主题', 'blue-gold': '💎 蓝金主题', system: '跟随系统' };

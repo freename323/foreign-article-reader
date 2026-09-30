@@ -8,15 +8,16 @@
 :root {
   --bg: #fafaf7; --fg: #1a1a1a; --muted: #666; --rule: #d4d0c8;
   --en-tag: #1a3a6c; --cn-tag: #b22222;
-  --card-bg: #fff; --card-border: #e0ddd5;
-  --accent: #2e7d32; --accent-bg: #e8f5e9;
+  --card-bg: #fffbf0; --card-border: #e6d99c;
+  --accent: #1a3a6c; --accent-bg: rgba(124,77,255,0.08);
 }
+/* v37: 四套主题色值与 src/reader.css 逐项对齐（文章主题是基准）。
+   之前 light/dark 的 accent 是文库自拟的绿色系，和文章页同名主题长得不一样。 */
 [data-theme="dark"] {
   --bg: #16181c; --fg: #e8e6e1; --muted: #9a978f; --rule: #3a3d44;
-  --card-bg: #1c1f24; --card-border: #2c2f36;
-  --accent: #68d391; --accent-bg: #1e3a2a;
+  --card-bg: #1f1d18; --card-border: #3d372a;
+  --accent: #4a6fa5; --accent-bg: rgba(179,136,255,0.12);
 }
-/* v33: 补齐阅读器的两个主题（色值与 src/reader.css 保持一致） */
 [data-theme="green"] {
   --bg: #dde5cb; --fg: #26301d; --muted: #6b7860; --rule: #b3c09e;
   --en-tag: #a5821c; --cn-tag: #ad4f22;
@@ -26,8 +27,8 @@
 [data-theme="blue-gold"] {
   --bg: #0f1a2e; --fg: #d4cfc0; --muted: #7a8599; --rule: #2a3650;
   --en-tag: #d4a830; --cn-tag: #e67e22;
-  --card-bg: #131d30; --card-border: #2a3650;
-  --accent: #8a6a14; --accent-bg: rgba(196,163,64,0.16);
+  --card-bg: #151e30; --card-border: #2a3650;
+  --accent: #8a6a14; --accent-bg: rgba(212,168,48,0.15);
 }
 * { box-sizing: border-box; }
 body {
