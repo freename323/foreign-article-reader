@@ -7,8 +7,8 @@
  *   默认输出: <项目根>/英语作文包_20260930/作文包_写作工坊导入.json
  *
  * 映射规则（格式见 references/作文模板导入说明.md）：
- *   - 每篇大作文范文 → big[] 一条：slots 三段，tip=整段范文，starters=首句（可一键插入仿写）
- *     · 「### 大作文练习」节的 ①②③ 三段式 → 规范框架（同日优先排最前）
+ *   - 每篇大作文范文 → readings[] 一条（v36：工坊「📚 范文」页签按日期阅读，不再做成写作框架）
+ *     · 「### 大作文练习」节的 ①②③ 三段式 → 规范稿（同日排最前，段落带 段名/角色/字数）
  *     · 「### 范文练习」节的 Article 1/2/…（CET-6/考研风格）→ 全部保留，各自一条
  *   - 每封小作文 → 按类型（建议信/投诉信/邀请信…）归入 small[] 对应条目的 samples[]
  *   - small[] 必须带全 10 个内置类型（含 format/structure）：工坊合并基底只含「已导入」内容，
@@ -72,28 +72,22 @@ function matchSmallType(name, small) {
 const ROLE_OF_LABEL = (label) => /描述/.test(label) ? '描述' : (/阐释|论证|意义/.test(label) ? '论证' : (/总结|展望|结论|建议/.test(label) ? '结论' : ''));
 const WORDS_OF_IDX = ['60-80', '120-150', '40-60'];
 
-// ===== 单篇大作文 → big[] 条目 =====
-function makeBig(date, dateStr, essay, orderTag) {
+// ===== 单篇大作文范文 → readings[] 条目（v36：范文走独立页签，不再做成写作框架）=====
+function makeReading(date, dateStr, essay, orderTag) {
   const paragraphs = essay.paragraphs.map(cleanPara).filter(Boolean);
   if (!paragraphs.length) return null;
   const title = essay.title || '外刊范文';
   return {
-    id: 'big_' + date + '_' + orderTag,
+    id: 'read_' + date + '_' + orderTag,
+    date: dateStr,
     title: dateStr + ' · ' + truncate(title, 42),
     topic: essay.topic || '',
     note: truncate(essay.note || '', 90),
-    slots: paragraphs.map((p, i) => {
+    paragraphs: paragraphs.map((p, i) => {
       const m = essay.marked && essay.marks[i];
       const label = m ? m.label : '第' + '一二三四五六'[i] + '段';
       const role = m ? (ROLE_OF_LABEL(m.label) || '') : (['描述', '论证', '结论'][i] || '');
-      return {
-        key: 'p' + (i + 1),
-        label: label,
-        role: role,
-        words: WORDS_OF_IDX[i] || '',
-        tip: p,
-        starters: [firstSentence(p)]
-      };
+      return { label: label, role: role, words: WORDS_OF_IDX[i] || '', text: p };
     })
   };
 }
@@ -132,7 +126,7 @@ function parseFile(file) {
       if (b) blocks.push(b);
       for (const blk of blocks) {
         const essays = splitArticleBlock(blk.lines, blk.style);
-        for (const e of essays) { e.note = noteBase + (blk.style ? ' · ' + blk.style : ''); const made = makeBig(date, dateStr, e, 'v' + (++seq)); if (made) bigs.push(made); }
+        for (const e of essays) { e.note = noteBase + (blk.style ? ' · ' + blk.style : ''); const made = makeReading(date, dateStr, e, 'v' + (++seq)); if (made) bigs.push(made); }
       }
     } else if (/^大作文练习/.test(sec.header)) {
       const type = (sec.header.match(/（([^）]*)）/) || [])[1] || '';
@@ -141,7 +135,7 @@ function parseFile(file) {
       if (/\*\*[①②③]/.test(body)) {
         const e = parseMarkedEssay(sec.body, topic);
         e.note = noteBase;
-        const made = makeBig(date, dateStr, e, 'p'); if (made) bigs.unshift(made); // 规范框架排同日最前
+        const made = makeReading(date, dateStr, e, 'p'); if (made) bigs.unshift(made); // 规范框架排同日最前
       } else {
         // 少见形态：大作文练习节里也是 Article 块
         const blocks = [];
@@ -153,7 +147,7 @@ function parseFile(file) {
         }
         if (bb) blocks.push(bb);
         for (const blk of blocks) {
-          for (const e of splitArticleBlock(blk.lines, blk.style)) { e.note = noteBase + (blk.style ? ' · ' + blk.style : ''); const made = makeBig(date, dateStr, e, 'v' + (++seq)); if (made) bigs.push(made); }
+          for (const e of splitArticleBlock(blk.lines, blk.style)) { e.note = noteBase + (blk.style ? ' · ' + blk.style : ''); const made = makeReading(date, dateStr, e, 'v' + (++seq)); if (made) bigs.push(made); }
         }
       }
     } else if (/^小作文练习/.test(sec.header)) {
@@ -242,37 +236,33 @@ for (const L of letters) {
   t.samples.push({ title: L.dateStr + ' · ' + truncate(L.note, 26), text: L.text });
 }
 
-// big 排序：按日期，同日内规范框架（_p）在前
-allBig.sort((a, b) => (a.id.split('_')[1] + (a.id.endsWith('_p') ? '0' : '1')).localeCompare(b.id.split('_')[1] + (b.id.endsWith('_p') ? '0' : '1')));
+// readings 排序：按日期，同日内规范稿（_p）在前
+allBig.sort((a, b) => (a.date + (a.id.endsWith('_p') ? '0' : '1')).localeCompare(b.date + (b.id.endsWith('_p') ? '0' : '1')));
 
 const out = {
   name: '英语作文包范文库（2026/04/09 ~ 2026/09/18）',
-  big: BUILTIN_BIG.concat(allBig),
+  readings: allBig,
   small: small
 };
 fs.writeFileSync(OUT, JSON.stringify(out, null, 1), 'utf8');
 
 console.log('输入文件: ' + files.length + ' 个 md');
-console.log('大作文条目: ' + allBig.length + ' (+1 内置框架 = ' + out.big.length + ')');
+console.log('范文条目: ' + allBig.length);
 for (const t of small) if (t.samples.length) console.log('小作文「' + t.name + '」范文 ' + t.samples.length + ' 篇');
 if (unmatched.length) console.log('未匹配类型的信件: ' + unmatched.join('；'));
 if (skipped.length) console.log('跳过: ' + skipped.join('；'));
 console.log('输出: ' + OUT + ' (' + fs.statSync(OUT).size + ' B)');
 
-// ===== 自校验：用工坊同一套归一化逻辑跑一遍（复刻自 06-exam.js，勿改逻辑）=====
+// ===== 自校验：用工坊同一套归一化逻辑跑一遍（复刻自 06-exam.js v36，勿改逻辑）=====
 function asArray(v) { return Array.isArray(v) ? v : (v == null ? [] : [v]); }
 function pickStr(o, keys, fb) { for (let i = 0; i < keys.length; i++) { const v = o[keys[i]]; if (typeof v === 'string' && v.trim()) return v.trim(); } return fb || ''; }
-function normalizeSlot(ra, idx) {
-  const s = (ra && typeof ra === 'object') ? ra : { label: String(ra || '') };
-  const starters = [];
-  ['starters', 'templates', 'openings', 'phrases', 'sentences'].forEach(k => { asArray(s[k]).forEach(x => { if (typeof x === 'string' && x.trim()) starters.push(x.trim()); }); });
-  return { key: pickStr(s, ['key', 'id'], 'p' + (idx + 1)), label: pickStr(s, ['label', 'name', 'title'], '第 ' + (idx + 1) + ' 段'), role: pickStr(s, ['role', 'func', 'function'], ''), words: pickStr(s, ['words', 'wordCount', 'length'], ''), tip: pickStr(s, ['tip', 'hint', 'note'], ''), starters: starters };
-}
-function normalizeBig(t, i) {
-  t = (t && typeof t === 'object') ? t : {};
-  let slots = asArray(t.slots || t.framework || t.paragraphs || t.parts);
-  if (!slots.length && t.paragraphs && typeof t.paragraphs === 'object') slots = Object.keys(t.paragraphs).sort().map(k => Object.assign({ key: k }, t.paragraphs[k]));
-  return { id: pickStr(t, ['id'], 'big_' + i), title: pickStr(t, ['title', 'name'], '大作文框架 ' + (i + 1)), topic: pickStr(t, ['topic', 'theme'], ''), note: pickStr(t, ['note', 'desc', 'description'], ''), slots: slots.length ? slots.map(normalizeSlot) : [] };
+function normalizeReading(x, i) {
+  x = (x && typeof x === 'object') ? x : {};
+  const paras = asArray(x.paragraphs || x.slots).map(p => (typeof p === 'string'
+    ? { label: '', role: '', words: '', text: p }
+    : { label: pickStr(p, ['label', 'name', 'title'], ''), role: pickStr(p, ['role', 'func'], ''), words: pickStr(p, ['words', 'wordCount'], ''), text: pickStr(p, ['text', 'body', 'content'], '') }))
+    .filter(p => p.text);
+  return { id: pickStr(x, ['id'], 'read_' + i), date: pickStr(x, ['date'], ''), title: pickStr(x, ['title', 'name'], '范文 ' + (i + 1)), topic: pickStr(x, ['topic', 'theme'], ''), note: pickStr(x, ['note', 'desc'], ''), paragraphs: paras };
 }
 function normalizeSmall(t, i) {
   t = (t && typeof t === 'object') ? t : {};
@@ -280,11 +270,16 @@ function normalizeSmall(t, i) {
   return { id: pickStr(t, ['id', 'type'], 'small_' + i), type: pickStr(t, ['type', 'id'], 'type_' + i), name: pickStr(t, ['name', 'title'], '应用文 ' + (i + 1)), format: pickStr(t, ['format', 'layout'], ''), structure: arrs('structure', 'outline'), openings: arrs('openings', 'opening'), closings: arrs('closings', 'closing'), samples: asArray(t.samples || t.examples).map(s => (typeof s === 'string' ? { title: '', text: s } : { title: pickStr(s, ['title', 'name'], ''), text: pickStr(s, ['text', 'body', 'content'], '') })).filter(s => s.text) };
 }
 const warnings = [];
-const nb = out.big.map(normalizeBig), ns = out.small.map(normalizeSmall);
+const nr = out.readings.map(normalizeReading).filter(x => x.paragraphs.length);
+const ns = out.small.map(normalizeSmall);
 ns.forEach(t => { if (!t.openings.length && !t.closings.length) warnings.push('小作文「' + t.name + '」没有开头/结尾套话，只导入到结构'); });
-nb.forEach(t => { if (!t.slots.length) warnings.push('大作文「' + t.title + '」没有槽位'); });
-const dupIds = nb.length !== new Set(nb.map(x => x.id)).size;
-if (dupIds) warnings.push('big 存在重复 id（合并时后者覆盖前者）');
+const idSet = new Set();
+let dupIds = false;
+for (const x of nr) { if (idSet.has(x.id)) dupIds = true; idSet.add(x.id); }
+if (dupIds) warnings.push('readings 存在重复 id');
+let badSort = false;
+for (let i = 1; i < nr.length; i++) { if (nr[i - 1].date > nr[i].date) badSort = true; }
+if (badSort) warnings.push('readings 日期非升序');
 console.log('--- 自校验 ---');
-console.log('normalize 后: big ' + nb.length + ' 条（全部带槽位: ' + nb.every(t => t.slots.length) + '）、small ' + ns.length + ' 条、范文总数 ' + ns.reduce((a, t) => a + t.samples.length, 0));
+console.log('normalize 后: readings ' + nr.length + ' 篇（全部带段落: ' + nr.every(x => x.paragraphs.length) + '）、small ' + ns.length + ' 条、信件范文总数 ' + ns.reduce((a, t) => a + t.samples.length, 0));
 if (warnings.length) console.log('工坊会显示的提示: ' + warnings.join('；')); else console.log('无警告');

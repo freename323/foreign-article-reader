@@ -2553,7 +2553,9 @@
   //   wsj_translation）一直是写了但没备份，错题本的 4 个库里只有 1 个进得了备份文件。
   const BACKUP_EXACT_KEYS = ['wsj_writing:materials', 'wsj_writing:advice', 'wsj_roots:cards',
     // 写作工坊：作文模板库 + 大小作文草稿 + 自由笔记（F05/F06/F17）+ 同义替换表（F08）
+    // + 范文库（v36，wsj_writing:readings —— 漏了它「📚 范文」页签恢复后就是空的）
     'wsj_writing:templates', 'wsj_writing:essays', 'wsj_writing:notes', 'wsj_writing:synonyms',
+    'wsj_writing:readings',
     'wsj_exam:wrongs', 'wsj_exam:overtime', 'wsj_exam:history', 'wsj_exam:theme',
     // 三个练习页自己的错题库（错题本会把它们和 wsj_exam:wrongs 合并成一张清单）
     'wsj_cloze:wrongs', 'wsj_newtype:wrongs', 'wsj_translation:wrongs',

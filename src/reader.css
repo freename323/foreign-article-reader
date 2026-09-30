@@ -1490,6 +1490,11 @@ body.ws-docked.ws-collapsed .pane-article { margin-right: 44px; }
 }
 .ws-resize:hover, .ws-resize.active { background: var(--accent); opacity: .35; }
 
+/* v36: 范文页签 —— 整篇范文按段落阅读 */
+.ws-reads-body { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.ws-reads-body .ws-slot { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--card-bg); }
+.ws-reads-text { font-size: 13.5px; line-height: 1.85; color: var(--fg); white-space: pre-wrap; word-break: break-word; }
+
 .ws-dock-btn {
   margin-left: auto; margin-right: 6px;
   border: 1px solid var(--border); background: var(--panel-bg); color: var(--fg);

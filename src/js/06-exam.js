@@ -1109,6 +1109,7 @@
         '<button class="workshop-tab active" data-wtab="all">📋 全部</button>' +
         '<button class="workshop-tab" data-wtab="essay">🏛 大作文</button>' +
         '<button class="workshop-tab" data-wtab="small">✉ 小作文</button>' +
+        '<button class="workshop-tab" data-wtab="reads">📚 范文</button>' +
         '<button class="workshop-tab" data-wtab="materials">📝 素材</button>' +
         '<button class="workshop-tab" data-wtab="advice">🖊 建议文</button>' +
         '<button class="workshop-tab" data-wtab="syntax">🧩 长难句</button>' +
@@ -1865,6 +1866,7 @@ function noteStorageCompare(n) {
     if (tab === 'all') { renderWorkshopOverview(body); return; }
     if (tab === 'essay') { renderBigEssayTab(body); return; }
     if (tab === 'small') { renderSmallEssayTab(body); return; }
+    if (tab === 'reads') { renderReadsTab(body); return; }
     if (tab === 'tpl') { renderTemplateTab(body); return; }
     if (tab === 'syn') { renderSynonymTab(body); return; }
     if (tab === 'materials') {
@@ -2088,6 +2090,10 @@ function noteStorageCompare(n) {
   // ==========================================================================
   const TPL_KEY = 'wsj_writing:templates';
   const ESSAY_KEY = 'wsj_writing:essays';
+  // v36: 范文库（英语作文包的整篇范文）—— 独立键，不混进 templates：
+  //      templates 是「写作框架」，范文是「对照阅读的成稿」，形态和生命周期都不同。
+  // ⚠ 必须同时加进 09-reading.js 的 BACKUP_EXACT_KEYS，否则备份静默漏数据。
+  const READINGS_KEY = 'wsj_writing:readings';
 
   // F17：作文自评清单（说明书写「数据存在 writing:essays 的 selfScore 字段」——
   // 字段名沿用，键名按项目习惯加 wsj_ 前缀）
@@ -2234,9 +2240,10 @@ function noteStorageCompare(n) {
     if (!obj || typeof obj !== 'object') return { error: '顶层必须是对象或数组' };
     const bigSrc = asArray(obj.big || obj.essays || obj.large);
     const smallSrc = asArray(obj.small || obj.applications || obj.letters);
+    const readingsSrc = asArray(obj.readings || obj.samples_library);
     const warnings = [];
-    if (!bigSrc.length && !smallSrc.length) {
-      return { error: '没找到 big / small 数组（也接受顶层直接是模板数组）' };
+    if (!bigSrc.length && !smallSrc.length && !readingsSrc.length) {
+      return { error: '没找到 big / small / readings 数组（也接受顶层直接是模板数组）' };
     }
     const big = bigSrc.map(normalizeBig);
     const small = smallSrc.map(normalizeSmall);
@@ -2251,7 +2258,23 @@ function noteStorageCompare(n) {
     big.forEach(t => {
       if (!t.slots.some(s => s.starters.length)) warnings.push('大作文「' + t.title + '」各段没有开头句式，只导入到槽位');
     });
-    return { big: big, small: small, checklist: checklist, warnings: warnings, name: pickStr(obj, ['name', 'title'], '') };
+    // v36: readings（范文库）—— 独立键存储，不进 templates
+    const readings = asArray(obj.readings || obj.samples_library).map((x, i) => {
+      const paras = asArray(x.paragraphs || x.slots).map(p => (typeof p === 'string'
+        ? { label: '', role: '', words: '', text: p }
+        : { label: pickStr(p, ['label', 'name', 'title'], ''), role: pickStr(p, ['role', 'func'], ''), words: pickStr(p, ['words', 'wordCount'], ''), text: pickStr(p, ['text', 'body', 'content'], '') }))
+        .filter(p => p.text);
+      return {
+        id: pickStr(x, ['id'], 'read_' + i),
+        date: pickStr(x, ['date'], ''),
+        title: pickStr(x, ['title', 'name'], '范文 ' + (i + 1)),
+        topic: pickStr(x, ['topic', 'theme'], ''),
+        note: pickStr(x, ['note', 'desc'], ''),
+        paragraphs: paras
+      };
+    }).filter(x => x.paragraphs.length);
+    if (readings.length) warnings.push('范文库 ' + readings.length + ' 篇将独立存储（wsj_writing:readings），不影响框架与草稿');
+    return { big: big, small: small, checklist: checklist, warnings: warnings, name: pickStr(obj, ['name', 'title'], ''), readings: readings };
   }
 
   // ---------- 草稿 ----------
@@ -2263,7 +2286,7 @@ function noteStorageCompare(n) {
   }
   function wordNum(t) { return String(t || '').trim().split(/\s+/).filter(Boolean).length; }
 
-  let _essaySel = { kind: 'big', tplId: '', draftId: '' };
+  let _essaySel = { kind: 'big', tplId: '', draftId: '', readId: '' };
   function openEssayWorkshop(kind) {
     openWritingWorkshop(kind === 'small' ? 'small' : 'essay');
   }
@@ -2286,6 +2309,7 @@ function noteStorageCompare(n) {
       '<div class="ws-ov-grid">' +
       cell('essay', '🏛', '大作文', drafts, tpl.big.length + ' 个框架 · 三段式草稿') +
       cell('small', '✉', '小作文', tpl.small.length, '10 类应用文 · 格式与套话') +
+      cell('reads', '📚', '范文', getReadings().length, '整篇范文对照读 · 可一键仿写') +
       cell('materials', '📝', '素材', mats, '文章里存的起因/经过/逻辑') +
       cell('advice', '🖊', '建议文', advice, '论点 · 建议 · 论述') +
       cell('syntax', '🧩', '长难句', syntax, '本篇句库，可用于默写') +
@@ -2378,6 +2402,68 @@ function noteStorageCompare(n) {
       renderSmallEssayTab(body);
     });
     renderDraftArea(body, tpl, 'small');
+  }
+
+  // ---------- 页签 2.5：范文（v36：整篇范文对照读，写作时可一键仿写）----------
+  function getReadings() {
+    try { return JSON.parse(localStorage.getItem(READINGS_KEY)) || []; } catch (e) { return []; }
+  }
+  function saveReadings(arr) {
+    try { localStorage.setItem(READINGS_KEY, JSON.stringify(arr)); } catch (e) { showTopToast('⚠ 范文库太大，浏览器存储写入失败'); }
+  }
+  function renderReadsTab(body) {
+    const all = getReadings();
+    if (!all.length) {
+      body.innerHTML =
+        '<div class="workshop-empty">范文库还是空的。</div>' +
+        '<div class="ws-tpl-tip">到「⬇ 模板导入」导入英语作文包的 JSON（含 <code>readings</code> 数组），这里就会按日期列出全部范文；' +
+        '写作时切到这页对照，点「✍ 仿写这篇」直接开一篇新草稿。</div>';
+      return;
+    }
+    if (!_essaySel.readId || !all.some(x => x.id === _essaySel.readId)) _essaySel.readId = all[0].id;
+    const r = all.filter(x => x.id === _essaySel.readId)[0] || all[0];
+    const idx = all.indexOf(r);
+    body.innerHTML =
+      '<div class="ws-essay-bar">' +
+      '<button type="button" id="reads-prev" title="上一篇">←</button>' +
+      '<select id="reads-pick" style="flex:1;min-width:0">' + all.map(x =>
+        '<option value="' + esc(x.id) + '"' + (x.id === r.id ? ' selected' : '') + '>' + esc(x.title) + '</option>').join('') + '</select>' +
+      '<button type="button" id="reads-next" title="下一篇">→</button>' +
+      '</div>' +
+      '<div class="ins-dim" style="margin:2px 0 6px">' +
+      (r.date ? esc(r.date) : '') +
+      (r.topic ? ' · ' + esc(r.topic) : '') +
+      (r.note ? ' · ' + esc(r.note) : '') +
+      '</div>' +
+      '<div class="ws-essay-bar"><button type="button" class="primary" id="reads-imitate">✍ 仿写这篇（开新草稿）</button></div>' +
+      '<div class="ws-reads-body">' +
+      (r.paragraphs || []).map(p =>
+        '<div class="ws-slot" data-reads-para>' +
+        '<div class="ws-slot-head"><b>' + esc(p.label || '段落') + '</b>' +
+        (p.role ? '<span class="ins-tag">' + esc(p.role) + '</span>' : '') +
+        (p.words ? '<span class="ins-tag type">' + esc(p.words) + ' 词</span>' : '') + '</div>' +
+        '<div class="ws-reads-text">' + esc(p.text || '') + '</div>' +
+        '</div>').join('') +
+      '</div>';
+    const pick = body.querySelector('#reads-pick');
+    pick.addEventListener('change', () => { _essaySel.readId = pick.value; renderReadsTab(body); });
+    const go = (d) => { _essaySel.readId = all[(idx + d + all.length) % all.length].id; renderReadsTab(body); };
+    body.querySelector('#reads-prev').addEventListener('click', () => go(-1));
+    body.querySelector('#reads-next').addEventListener('click', () => go(1));
+    body.querySelector('#reads-imitate').addEventListener('click', () => {
+      const d = {
+        id: genId(), kind: 'big', templateId: 'big_three',
+        title: (r.title || '范文仿写') + '（仿写）', topic: r.topic || '',
+        slots: { p1: '', p2: '', p3: '' }, scores: {},
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+      };
+      const drafts = essayDrafts(); drafts.push(d); saveEssayDrafts(drafts);
+      _essaySel.tplId = 'big_three'; _essaySel.draftId = d.id;
+      showTopToast('已按通用框架开新草稿，可对照左侧范文写');
+      const panel = document.getElementById('writing-workshop');
+      const tabBtn = panel && panel.querySelector('.workshop-tab[data-wtab="essay"]');
+      if (tabBtn) tabBtn.click(); else renderWorkshopBody('essay');
+    });
   }
 
   // ---------- 草稿编辑区（大作文按槽位 / 小作文单框）+ 旧稿列表 + F17 自评 ----------
@@ -2710,9 +2796,12 @@ function noteStorageCompare(n) {
         meta: { name: r.name || (rawStored.meta && rawStored.meta.name) || '' }
       };
       saveEssayTemplates(out);
+      // v36: 范文库（readings）走独立键 —— 导入即整库替换（范文库天然是"全集"，按 id 合并无意义）
+      if (r.readings && r.readings.length) saveReadings(r.readings);
       syncDraftSlots();
       const summary = '✓ 已' + (mode === 'replace' ? '替换' : '合并') + '模板：大作文 <b>' + out.big.length +
         '</b> 个、小作文 <b>' + out.small.length + '</b> 个、自评维度 <b>' + out.checklist.length + '</b> 项。' +
+        (r.readings && r.readings.length ? '<br>📚 范文库已更新：<b>' + r.readings.length + '</b> 篇（「📚 范文」页签查看）。' : '') +
         (r.warnings.length ? '<br><span class="ins-dim">提示：' + r.warnings.slice(0, 5).map(esc).join('<br>') + '</span>' : '');
       // ⚠ 必须先记下提示文案再重渲染：重渲染会换掉 #tpl-msg 节点，
       //   写进旧节点等于写进一个已经脱离文档的 div，用户什么都看不到。
