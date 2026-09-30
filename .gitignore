@@ -17,6 +17,7 @@ reader-backup-*.json
 .qoder/
 .workspace-marker
 .workbuddy/
+.zcodeignore
 
 # === 设计草稿（不公开）===
 proposals/

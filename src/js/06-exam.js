@@ -19,6 +19,11 @@
   let qTypeFilter = R.qTypeFilter || 'all';
   let qMasteryFilter = R.qMasteryFilter || 'all';
   let noteSearchQuery = R.noteSearchQuery || '';
+  // v31: 写作工坊停靠（key 提到模块顶部，避免 openWritingWorkshop 先于 const 初始化）
+  const WS_DOCK_KEY = 'wsj_workshop:dockWidth';
+  const WS_DOCK_ON_KEY = 'wsj_workshop:docked';
+  // v34: 停靠宽度上限 = 视口 45%（分屏时正文至少还剩 55%）
+  const WS_DOCK_MAX_RATIO = 0.45;
   function syncToR() {
     if (R.qTypeFilter !== qTypeFilter) R.qTypeFilter = qTypeFilter;
     if (R.qMasteryFilter !== qMasteryFilter) R.qMasteryFilter = qMasteryFilter;
@@ -1100,7 +1105,11 @@
       panel.id = 'writing-workshop';
       panel.className = 'syntax-panel writing-workshop';
       panel.innerHTML =
-        '<div class="syntax-header"><h3>✍️ 写作工坊</h3><button type="button" data-close="1" title="关闭">✕</button></div>' +
+        '<div class="syntax-header"><h3>✍️ 写作工坊</h3><div style="display:flex;align-items:center;gap:4px;">' +
+        '<button type="button" class="ws-collapse-btn" data-collapse="1" title="收成窄条，正文全宽" style="display:none;">✍️<span class="ws-collapse-count" data-wc-count></span></button>' +
+        '<button type="button" class="ws-collapse-btn" data-expand="1" title="展开面板" style="display:none;">✍️</button>' +
+        '<button type="button" class="ws-dock-btn" data-dock="1" title="停到右侧，左边继续读原文">⇥ 停靠</button>' +
+        '<button type="button" data-close="1" title="关闭">✕</button></div></div>' +
         '<div class="workshop-tabs">' +
         '<button class="workshop-tab active" data-wtab="all">📋 全部</button>' +
         '<button class="workshop-tab" data-wtab="essay">🏛 大作文</button>' +
@@ -1116,7 +1125,38 @@
         '<div class="workshop-body" id="workshop-body"></div>' +
         '<div class="syntax-actions"><button type="button" data-close="1">关闭</button></div>';
       document.body.appendChild(panel);
-      panel.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', () => panel.classList.remove('visible')));
+      panel.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', () => {
+        if (panel._wsFlush) panel._wsFlush();
+        panel.classList.remove('visible');
+        // 关掉时把主栏的停靠让位一并撤掉，避免左侧留出空白
+        document.body.classList.remove('ws-docked', 'ws-collapsed');
+        document.documentElement.style.removeProperty('--ws-dock-w');
+      }));
+      // v34: Esc 在折叠态时展开 / 在停靠态时折叠（居中弹窗不拦 Esc，避免和关闭冲突）
+      panel.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        if (!panel.classList.contains('docked')) return;
+        if (panel._wsFlush) panel._wsFlush();
+        setWorkshopCollapsed(panel, !panel.classList.contains('collapsed'));
+        e.stopPropagation();
+      });
+      // v31: 停靠开关 —— 停到右侧后左边原文仍可读可滚动
+      const dockBtn = panel.querySelector('[data-dock]');
+      if (dockBtn) dockBtn.addEventListener('click', () => toggleWorkshopDock(panel, dockBtn));
+      // v34: 折叠 / 展开（分屏时把工坊收成竖条，正文回到全宽）
+      const colBtn = panel.querySelector('[data-collapse]');
+      if (colBtn) colBtn.addEventListener('click', () => {
+        if (panel._wsFlush) panel._wsFlush();
+        setWorkshopCollapsed(panel, true);
+      });
+      const expBtn = panel.querySelector('[data-expand]');
+      if (expBtn) expBtn.addEventListener('click', () => setWorkshopCollapsed(panel, false));
+      // v31: 停靠后可拖左边缘调宽度
+      const rs = document.createElement('div');
+      rs.className = 'ws-resize';
+      rs.title = '拖动调整宽度';
+      panel.appendChild(rs);
+      wireWorkshopResize(panel, rs);
       panel.querySelectorAll('.workshop-tab').forEach(btn => {
         btn.addEventListener('click', () => {
           panel.querySelectorAll('.workshop-tab').forEach(b => b.classList.remove('active'));
@@ -1131,7 +1171,102 @@
     } else {
       renderWorkshopBody(panel.querySelector('.workshop-tab.active').dataset.wtab);
     }
+    // v31: 记住上次的停靠选择，下次打开直接就是并排状态
+    let wantDock = false;
+    try { wantDock = localStorage.getItem(WS_DOCK_ON_KEY) === '1'; } catch (e) {}
+    const dockBtn = panel.querySelector('[data-dock]');
+    if (wantDock && dockBtn && !panel.classList.contains('docked')) toggleWorkshopDock(panel, dockBtn);
+    // v34: 停靠时把「收成窄条」按钮露出来（居中态不给折叠按钮，折叠无意义）
+    const colBtn = panel.querySelector('[data-collapse]');
+    const expBtn = panel.querySelector('[data-expand]');
+    const docked = panel.classList.contains('docked');
+    if (colBtn) colBtn.style.display = (docked && !panel.classList.contains('collapsed')) ? 'flex' : 'none';
+    if (expBtn) expBtn.style.display = (docked && panel.classList.contains('collapsed')) ? 'flex' : 'none';
+    // 折叠态下刷新竖条上的字数
+    if (docked && panel.classList.contains('collapsed')) setWorkshopCollapsed(panel, true);
     panel.classList.add('visible');
+  }
+  // ===== v31: 停靠 / 取消停靠 =====
+  // v34：默认宽度从 620 降到 440 —— 分屏时浏览器通常只有半屏宽，620 会把正文压到没法读。
+  //      上限改为「不超过视口 45%」，窄屏自动收敛。
+  function wsDockMax() { return Math.max(280, Math.min(760, Math.round(window.innerWidth * WS_DOCK_MAX_RATIO))); }
+  function wsDockWidth() {
+    try { return Math.min(wsDockMax(), Math.max(280, Number(localStorage.getItem(WS_DOCK_KEY)) || 440)); }
+    catch (e) { return Math.min(wsDockMax(), 440); }
+  }
+  function applyDockWidth(px) {
+    const w = Math.min(wsDockMax(), Math.max(280, Math.round(px)));
+    try { localStorage.setItem(WS_DOCK_KEY, String(w)); } catch (e) {}
+    document.documentElement.style.setProperty('--ws-dock-w', w + 'px');
+  }
+  // v34: 折叠 / 展开（只有停靠态才有意义 —— 居中弹窗本来就盖住全文，折叠没意义）
+  function setWorkshopCollapsed(panel, collapsed) {
+    const on = !!collapsed;
+    panel.classList.toggle('collapsed', on);
+    document.body.classList.toggle('ws-collapsed', on);
+    // 折叠时显示竖条按钮；展开时显示正常头部按钮
+    const c = panel.querySelector('[data-collapse]');
+    const e = panel.querySelector('[data-expand]');
+    if (c) c.style.display = on ? 'none' : 'flex';
+    if (e) e.style.display = on ? 'flex' : 'none';
+    // 折叠时把当前字数显示在竖条上，一眼看到进度
+    const cnt = panel.querySelector('[data-wc-count]');
+    if (cnt) {
+      if (on) {
+        const ta = panel.querySelector('#note-content-input') || panel.querySelector('[data-slot]');
+        const n = ta ? wordNumOf(ta.value) : 0;
+        cnt.textContent = n ? String(n) : '';
+      } else cnt.textContent = '';
+    }
+  }
+  function wordNumOf(t) { return String(t || '').trim().split(/\s+/).filter(Boolean).length; }
+  function toggleWorkshopDock(panel, btn) {
+    const dock = panel.classList.toggle('docked');
+    document.body.classList.toggle('ws-docked', dock);
+    btn.textContent = dock ? '⇤ 居中' : '⇥ 停靠';
+    btn.title = dock ? '回到居中弹窗' : '停到右侧，左边继续读原文';
+    try { localStorage.setItem(WS_DOCK_ON_KEY, dock ? '1' : '0'); } catch (e) {}
+    const rs = panel.querySelector('.ws-resize');
+    if (rs) rs.style.display = (dock && !panel.classList.contains('collapsed')) ? '' : 'none';
+    if (dock) {
+      applyDockWidth(wsDockWidth());
+      setWorkshopCollapsed(panel, false);
+    } else {
+      // 回居中：撤掉所有让位
+      document.documentElement.style.removeProperty('--ws-dock-w');
+      document.body.classList.remove('ws-collapsed');
+      panel.classList.remove('collapsed');
+      setWorkshopCollapsed(panel, false);
+    }
+  }
+  function wireWorkshopResize(panel, handle) {
+    handle.style.display = 'none';
+    let dragging = false;
+    const onMove = (e) => {
+      if (!dragging) return;
+      const x = (e.touches ? e.touches[0].clientX : e.clientX);
+      applyDockWidth(window.innerWidth - x);
+      e.preventDefault();
+    };
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      handle.classList.remove('active');
+      document.body.style.userSelect = '';
+    };
+    const onDown = (e) => {
+      if (!panel.classList.contains('docked')) return;
+      dragging = true;
+      handle.classList.add('active');
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    };
+    handle.addEventListener('mousedown', onDown);
+    handle.addEventListener('touchstart', onDown, { passive: false });
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('touchend', onUp);
   }
   function getMaterials() {
     try { return JSON.parse(localStorage.getItem('wsj_writing:materials')) || []; } catch(e) { return []; }
@@ -1842,31 +1977,74 @@ function noteStorageCompare(n) {
       body.querySelectorAll('.note-list-item').forEach(el => {
         el.addEventListener('click', () => { body.dataset.activeNote = el.dataset.noteId; renderWorkshopBody('notes'); });
       });
-      // Auto-save with debounce
+      // v31: 自动保存节流 —— 原 800ms debounce 会每敲几个字就写一次 localStorage 并
+      // 压一条历史版本，长期编辑既费 IO 又把 10 条版本槽迅速冲掉（写长作文时
+      // 历史基本等于"刚才那句"）。改为：
+      //   · 停止输入 WS_SAVE_IDLE_MS(3s) 后先落一次盘（防丢稿）
+      //   · 每 WS_SAVE_EVERY_MS(3min) 压一条历史版本
+      //   · 关闭面板 / 切 tab / 失焦时强制落盘
       const titleInput = document.getElementById('note-title-input');
       const contentInput = document.getElementById('note-content-input');
+      const WS_SAVE_IDLE_MS = 3000;      // 停手多久后落盘
+      const WS_SAVE_EVERY_MS = 180000;   // 每 3 分钟压一条历史版本
       let saveTimer = null;
-      function autoSave() {
-        const status = document.getElementById('note-save-status');
-        if (status) status.textContent = '保存中…';
-        clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => {
-          const notes = getNotes();
-          const n = notes.find(x => x.id === activeId);
-          if (!n) return;
-          // 把「修改前的内容」压成历史版本（F15：首次存全文，之后只存与上一版的增量）
+      let lastSnapAt = Date.now();      // 上次压版本的时间戳（从打开编辑器起算）
+      let pending = false;               // 是否有未落盘的改动
+      function doSave(force) {
+        const notes = getNotes();
+        const n = notes.find(x => x.id === activeId);
+        if (!n) return;
+        const now = Date.now();
+        // 历史版本：距上次压版足够久，或强制（关闭/切走）时才压
+        if (force || now - lastSnapAt >= WS_SAVE_EVERY_MS) {
           if (n.content !== contentInput.value || n.title !== titleInput.value) {
             notePushVersion(n);
+            lastSnapAt = now;
           }
-          n.title = titleInput.value.trim();
-          n.content = contentInput.value;
-          n.updatedAt = new Date().toISOString();
-          saveNotes(notes);
-          if (status) status.textContent = '✓ 已自动保存 ' + new Date().toLocaleTimeString();
-        }, 800);
+        }
+        n.title = titleInput.value.trim();
+        n.content = contentInput.value;
+        n.updatedAt = new Date().toISOString();
+        saveNotes(notes);
+        pending = false;
+        const status = document.getElementById('note-save-status');
+        if (status) status.textContent = '✓ 已自动保存 ' + new Date().toLocaleTimeString();
+      }
+      function autoSave() {
+        pending = true;
+        const status = document.getElementById('note-save-status');
+        if (status) status.textContent = '编辑中…（停手 3 秒自动保存）';
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => doSave(false), WS_SAVE_IDLE_MS);
       }
       if (titleInput) titleInput.addEventListener('input', autoSave);
       if (contentInput) contentInput.addEventListener('input', autoSave);
+      // 关闭 / 切走 / 失焦：强制落盘，避免最后一段没存上
+      const wsPanel = document.getElementById('writing-workshop');
+      // v31: renderWorkshopBody 每次切 tab 都会重跑这段，document 上的捕获监听必须
+      // 只挂一次（否则切 N 次 tab 存 N 次盘）。但 doSave/pending 是本次渲染的闭包，
+      // 直接复用旧闭包会操作已被替换掉的 DOM —— 所以把最新的刷新器挂到 panel 上，
+      // 监听器始终调用「当前」那一份。
+      if (wsPanel) {
+        wsPanel._wsFlush = () => { clearTimeout(saveTimer); if (pending) doSave(true); };
+        if (!wsPanel.dataset.saveWired) {
+          wsPanel.dataset.saveWired = '1';
+          wsPanel.addEventListener('transitionend', () => {
+            if (!wsPanel.classList.contains('visible') && wsPanel._wsFlush) wsPanel._wsFlush();
+          });
+          wsPanel.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 's' && wsPanel._wsFlush) { e.preventDefault(); wsPanel._wsFlush(); }
+          });
+          document.addEventListener('click', (e) => {
+            if (!wsPanel.classList.contains('visible') || !wsPanel._wsFlush) return;
+            if (e.target && e.target.closest && e.target.closest('.workshop-tab, [data-close], [data-dock]')) wsPanel._wsFlush();
+          }, true);
+          window.addEventListener('beforeunload', () => { if (wsPanel._wsFlush) wsPanel._wsFlush(); });
+        }
+      }
+      [titleInput, contentInput].forEach(el => {
+        if (el) el.addEventListener('blur', () => { if (pending) { clearTimeout(saveTimer); doSave(true); } });
+      });
       // History button
       const histBtn = document.getElementById('note-history-btn');
       if (histBtn) histBtn.addEventListener('click', () => {

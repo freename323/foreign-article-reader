@@ -16,6 +16,19 @@
   --card-bg: #1c1f24; --card-border: #2c2f36;
   --accent: #68d391; --accent-bg: #1e3a2a;
 }
+/* v33: 补齐阅读器的两个主题（色值与 src/reader.css 保持一致） */
+[data-theme="green"] {
+  --bg: #dde5cb; --fg: #26301d; --muted: #6b7860; --rule: #b3c09e;
+  --en-tag: #a5821c; --cn-tag: #ad4f22;
+  --card-bg: #e8eed7; --card-border: #c2cda6;
+  --accent: #3f5620; --accent-bg: rgba(176,145,39,0.16);
+}
+[data-theme="blue-gold"] {
+  --bg: #0f1a2e; --fg: #d4cfc0; --muted: #7a8599; --rule: #2a3650;
+  --en-tag: #d4a830; --cn-tag: #e67e22;
+  --card-bg: #131d30; --card-border: #2a3650;
+  --accent: #8a6a14; --accent-bg: rgba(196,163,64,0.16);
+}
 * { box-sizing: border-box; }
 body {
   margin: 0; padding: 0;
@@ -35,6 +48,15 @@ body {
   font-family: -apple-system, sans-serif;
 }
 .top-bar button:hover, .scan-btn:hover { background: var(--accent-bg); }
+/* v33: 主题选择器（4 个主题，跟阅读器一致） */
+.theme-picker { display: inline-flex; gap: 2px; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
+.theme-picker button {
+  border: none; border-radius: 0; padding: 6px 10px; background: transparent;
+  color: var(--fg); cursor: pointer; font-size: 14px; line-height: 1;
+}
+.theme-picker button + button { border-left: 1px solid var(--rule); }
+.theme-picker button:hover { background: var(--accent-bg); }
+.theme-picker button.active { background: var(--accent-bg); box-shadow: inset 0 -2px 0 var(--accent); }
 .scan-btn {
   background: var(--en-tag) !important; color: #fff !important;
   border-color: var(--en-tag) !important; font-weight: 600;
@@ -474,8 +496,7 @@ body {
 <div class="top-bar">
   <h1>📚 WSJ 文库 / Article Hub</h1>
   <button class="scan-btn" onclick="scanFolder()" id="scan-btn">📂 扫描文件夹</button>
-  <button onclick="setTheme('light')">☀</button>
-  <button onclick="setTheme('dark')">🌙</button>
+  <div class="theme-picker" id="theme-picker"></div>
   <button onclick="hubBackup()" title="导出所有笔记/标注数据">⬇ 备份</button>
   <button onclick="hubRestore()" title="从备份文件恢复数据">⬆ 恢复</button>
   <button onclick="location.reload()">↻</button>
@@ -529,14 +550,41 @@ body {
 
 <script>
 // ===== Theme =====
-function setTheme(t) {
-  if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+// v33: 与阅读器共用 wsj_exam:theme，四个主题（light / dark / green / blue-gold），
+//      避免「文章页是绿金、点进文库变蓝橙」的主题割裂。
+//      旧的 wsj_hub:theme 保留读取一次作为迁移兜底。
+const HUB_THEMES = ['light', 'dark', 'green', 'blue-gold'];
+const HUB_THEME_META = {
+  light:     { icon: '☀', label: '亮色' },
+  dark:      { icon: '🌙', label: '暗色' },
+  green:     { icon: '🌿', label: '绿金' },
+  'blue-gold': { icon: '🔷', label: '蓝金' },
+};
+function hubApplyTheme(t) {
+  if (t && t !== 'light') document.documentElement.setAttribute('data-theme', t);
   else document.documentElement.removeAttribute('data-theme');
-  localStorage.setItem('wsj_hub:theme', t);
+  document.querySelectorAll('[data-theme-btn]').forEach(b => {
+    b.classList.toggle('active', b.dataset.themeBtn === (t || 'light'));
+  });
+}
+function setTheme(t) {
+  if (HUB_THEMES.indexOf(t) < 0) t = 'light';
+  hubApplyTheme(t);
+  try {
+    localStorage.setItem('wsj_exam:theme', t);   // 阅读器读的 key
+    localStorage.setItem('wsj_hub:theme', t);    // 旧 key，同步写一份
+  } catch (e) {}
+}
+function cycleHubTheme() {
+  let cur = 'light';
+  try { cur = localStorage.getItem('wsj_exam:theme') || localStorage.getItem('wsj_hub:theme') || 'light'; } catch (e) {}
+  const i = HUB_THEMES.indexOf(cur);
+  setTheme(HUB_THEMES[(i + 1) % HUB_THEMES.length]);
 }
 (function() {
-  const saved = localStorage.getItem('wsj_hub:theme');
-  if (saved === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  let saved = null;
+  try { saved = localStorage.getItem('wsj_exam:theme') || localStorage.getItem('wsj_hub:theme'); } catch (e) {}
+  hubApplyTheme(HUB_THEMES.indexOf(saved) >= 0 ? saved : 'light');
 })();
 
 // ===== Data helpers =====
@@ -733,7 +781,22 @@ function parseArticleHTML(fileName, html) {
 }
 
 // ===== Rendering =====
+function renderThemePicker() {
+  const box = document.getElementById('theme-picker');
+  if (!box) return;
+  let cur = 'light';
+  try { cur = localStorage.getItem('wsj_exam:theme') || localStorage.getItem('wsj_hub:theme') || 'light'; } catch (e) {}
+  box.innerHTML = HUB_THEMES.map(t => {
+    const m = HUB_THEME_META[t];
+    return '<button type="button" data-theme-btn="' + t + '" title="' + m.label + '"' +
+      (t === cur ? ' class="active"' : '') + '>' + m.icon + '</button>';
+  }).join('');
+  box.querySelectorAll('[data-theme-btn]').forEach(b => {
+    b.addEventListener('click', () => setTheme(b.dataset.themeBtn));
+  });
+}
 function renderAll() {
+  renderThemePicker();
   const registry = getRegistry();
   renderStats(registry);
   renderArticles(registry);
@@ -1525,67 +1588,201 @@ function updateWrongCause(key, cause) {
   if (r) { r.cause = cause; localStorage.setItem('wsj_exam:wrongs', JSON.stringify(recs)); }
   renderWrongAnalysis();
 }
+/* v35: 错题统一收敛层 —— 4 个模块的错题归一化 + 间隔重复排期
+   （各模块的 key/结构见下方 WRONG_STORES 注释） */
+const WRONG_STORES = [
+  { store: 'exam',        key: 'wsj_exam:wrongs',        label: '阅读理解', icon: '🎓' },
+  { store: 'cloze',       key: 'wsj_cloze:wrongs',       label: '完形填空', icon: '🧩' },
+  { store: 'newtype',     key: 'wsj_newtype:wrongs',     label: '新题型',   icon: '🔀' },
+  { store: 'translation', key: 'wsj_translation:wrongs', label: '翻译',     icon: '🔤' },
+  { store: 'dictation',   key: 'wsj_dictation:wrongs',   label: '默写错词', icon: '✍️' },
+];
+const WRONG_CAUSE_FALLBACK = {
+  exam: { vocab: '词汇', syntax: '长难句', logic: '逻辑', qtype: '题型', careless: '粗心', trans: '误译' },
+  cloze: { SYNONYM: '近义辨析', COLLOCATION: '固定搭配', CONNECTOR: '逻辑连接', MINE: '生词', POS: '词性', CONTEXT: '语境词' },
+  newtype: { ANAPHORA: '指代错', LOGIC: '逻辑错', REPETITION: '复现识别错', THEME: '主旨错', EXAMPLE: '例证错', POSITION: '位置错', FALLBACK: '通用错' },
+};
+function hubLS(k, dflt) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : dflt; } catch (e) { return dflt; } }
+function collectAllWrongs() {
+  const out = [];
+  WRONG_STORES.forEach(def => {
+    const arr = hubLS(def.key, []) || [];
+    if (!Array.isArray(arr)) return;
+    arr.forEach(r => {
+      if (!r) return;
+      const causeRaw = r.cause || '';
+      const causeMap = WRONG_CAUSE_FALLBACK[def.store] || {};
+      const isScore = def.store === 'translation';
+      out.push({
+        store: def.store, storeLabel: def.label, storeIcon: def.icon,
+        key: r.key || ((r.slug || '') + '#' + r.no), slug: r.slug || '',
+        no: r.no != null ? r.no : '', type: r.type || '',
+        myAnswer: r.myAnswer || '', answer: isScore ? '' : (r.answer || ''),
+        ref: r.ref || '', score: isScore ? (Number(r.score) || 0) : null, isScore: isScore,
+        cause: causeRaw,
+        causeLabel: causeMap[causeRaw] || causeRaw || (isScore ? '未达意' : '未标记'),
+        at: r.at || r.createdAt || '',
+      });
+    });
+  });
+  return out;
+}
+function hubWrongRevAll() { return hubLS('wsj_wrongrev', {}) || {}; }
+function hubWrongRevFor(store, key) { const all = hubWrongRevAll(); return all[store + '|' + String(key || '')] || all[String(key || '')] || null; }
+function hubSaveWrongRev(store, key, rec) {
+  const all = hubWrongRevAll();
+  all[store + '|' + String(key || '')] = rec;
+  try { localStorage.setItem('wsj_wrongrev', JSON.stringify(all)); } catch (e) {}
+}
+function hubToday() { const d = new Date(), p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+function hubAddDays(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d.getTime())) return dateStr;
+  d.setDate(d.getDate() + n);
+  const p = x => String(x).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+const HUB_WRONG_STEPS = [1, 2, 4, 8, 16];
+const HUB_MASTER_N = 3;
+function hubWrongGrade(store, key, correct) {
+  const rev = hubWrongRevFor(store, key) || { n: 0, nextDue: '', last: '', done: false };
+  rev.n = correct ? (rev.n || 0) + 1 : 0;
+  rev.last = new Date().toISOString();
+  if (rev.n >= HUB_MASTER_N) { rev.done = true; rev.nextDue = ''; }
+  else { rev.done = false; rev.nextDue = hubAddDays(hubToday(), HUB_WRONG_STEPS[Math.min(rev.n, HUB_WRONG_STEPS.length - 1)]); }
+  hubSaveWrongRev(store, key, rev);
+  return rev;
+}
+function hubWrongDue(store, key) {
+  const rev = hubWrongRevFor(store, key);
+  if (!rev || rev.done) return false;
+  if (!rev.nextDue) return true;
+  return rev.nextDue <= hubToday();
+}
+window.WRONG_STORES = WRONG_STORES;
+window.collectAllWrongs = collectAllWrongs;
+window.hubWrongGrade = hubWrongGrade;
+window.hubWrongDue = hubWrongDue;
+window.hubWrongRevFor = hubWrongRevFor;
+
 function renderWrongAnalysis() {
   const wrap = document.getElementById('tab-wrong');
   if (!wrap) return;
-  let recs = [];
-  try { recs = JSON.parse(localStorage.getItem('wsj_exam:wrongs') || '[]'); } catch (e) {}
-  let overs = [];
-  try { overs = JSON.parse(localStorage.getItem('wsj_exam:overtime') || '[]'); } catch (e) {}
-  if (recs.length === 0) {
-    wrap.innerHTML = '<div class="empty-state"><h2>暂无考试作答记录</h2><p>到文章页右侧菜单 → 📝 模拟考试 开始作答，<br>答错后可标记错因，这里会自动汇总分析。</p></div>';
+  const all = collectAllWrongs();
+  const overs = hubLS('wsj_exam:overtime', []) || [];
+
+  if (all.length === 0) {
+    wrap.innerHTML = '<div class="empty-state"><h2>暂无错题</h2><p>到文章页开始作答后，错题会自动汇总到这里 ——<br>' +
+      '<b>阅读理解</b> / <b>完形填空</b> / <b>新题型</b> / <b>翻译</b> / <b>默写</b> 五个模块的错题都会归到一处。</p></div>';
     return;
   }
-  const answered = recs.filter(r => r.myAnswer);
-  const wrongs = answered.filter(r => r.myAnswer !== r.answer);
-  const rights = answered.filter(r => r.myAnswer === r.answer);
-  // Cause distribution
-  const causeCnt = {};
-  wrongs.forEach(r => { const c = r.cause || 'unset'; causeCnt[c] = (causeCnt[c] || 0) + 1; });
-  const maxCnt = Math.max(1, ...Object.values(causeCnt));
-  let barsHtml = '';
-  Object.keys(WRONG_CAUSE_LABELS).concat(['unset']).forEach(c => {
-    const n = causeCnt[c] || 0;
-    if (c === 'unset' && n === 0) return;
-    const label = c === 'unset' ? '未标记' : WRONG_CAUSE_LABELS[c];
-    barsHtml += `<div class="cause-bar-row"><span class="cause-bar-label">${label}</span>
-      <div class="cause-bar-track"><div class="cause-bar-fill${c === 'unset' ? ' unset' : ''}" style="width:${Math.round(n / maxCnt * 100)}%"></div></div>
-      <span class="cause-bar-num">${n}</span></div>`;
-  });
-  // Per-article accuracy
-  const bySlug = {};
-  answered.forEach(r => { (bySlug[r.slug] = bySlug[r.slug] || { title: r.title, total: 0, right: 0 }); });
-  answered.forEach(r => { bySlug[r.slug].total++; if (r.myAnswer === r.answer) bySlug[r.slug].right++; });
-  let accHtml = Object.values(bySlug).map(s => {
-    const pct = Math.round(s.right / s.total * 100);
-    return `<span class="acc-chip">${esc(s.title)} ${s.right}/${s.total}（${pct}%）</span>`;
+
+  // 按模块分组统计
+  const byStore = {};
+  all.forEach(r => { (byStore[r.store] = byStore[r.store] || []).push(r); });
+  const dueList = all.filter(r => hubWrongDue(r.store, r.key));
+  const mastered = all.filter(r => { const v = hubWrongRevFor(r.store, r.key); return v && v.done; });
+
+  // 顶部 KPI
+  const storeChips = WRONG_STORES.map(def => {
+    const n = (byStore[def.store] || []).length;
+    if (!n) return '';
+    return `<span class="acc-chip" data-store-filter="${def.store}" style="cursor:pointer">${def.icon} ${esc(def.label)} ${n}</span>`;
   }).join('');
-  const overHtml = overs.length ? `<div class="wrong-overs">⏰ 超时记录 ${overs.length} 次：${overs.slice(-5).map(o => esc(o.title)).join('、')}${overs.length > 5 ? '…' : ''}</div>` : '';
-  // Wrong detail table
-  let rowsHtml = wrongs.map(r => `<tr>
-    <td>${esc(r.title || r.slug)}</td>
-    <td>第${r.no}题${r.type ? ' · ' + esc(r.type) : ''}</td>
-    <td><b style="color:var(--cn-tag)">${esc(r.myAnswer)}</b> / ${esc(r.answer)}</td>
-    <td><select onchange="updateWrongCause('${esc(r.key)}', this.value)" class="cause-select">
-      <option value="">未标记</option>
-      ${Object.keys(WRONG_CAUSE_LABELS).map(k => `<option value="${k}"${r.cause === k ? ' selected' : ''}>${WRONG_CAUSE_LABELS[k]}</option>`).join('')}
-    </select></td>
-  </tr>`).join('');
+
+  // 错因分布（跨模块，causeLabel 统一后统计）
+  const causeCnt = {};
+  all.forEach(r => { const c = r.causeLabel || '未标记'; causeCnt[c] = (causeCnt[c] || 0) + 1; });
+  const maxCnt = Math.max(1, ...Object.values(causeCnt));
+  const barsHtml = Object.keys(causeCnt).sort((a, b) => causeCnt[b] - causeCnt[a]).map(c => {
+    const n = causeCnt[c];
+    return `<div class="cause-bar-row"><span class="cause-bar-label">${esc(c)}</span>
+      <div class="cause-bar-track"><div class="cause-bar-fill${c === '未标记' ? ' unset' : ''}" style="width:${Math.round(n / maxCnt * 100)}%"></div></div>
+      <span class="cause-bar-num">${n}</span></div>`;
+  }).join('');
+
+  // 每模块正确率（exam 模块有 answer 可判对错；其余模块的错题字典本身就是"错过"）
+  const accHtml = WRONG_STORES.map(def => {
+    const n = (byStore[def.store] || []).length;
+    if (!n) return '';
+    return `<span class="acc-chip">${def.icon} ${esc(def.label)} ${n} 错</span>`;
+  }).join('');
+
+  const overHtml = overs.length
+    ? `<div class="wrong-overs">⏰ 超时记录 ${overs.length} 次：${overs.slice(-5).map(o => esc(o.title)).join('、')}${overs.length > 5 ? '…' : ''}</div>`
+    : '';
+
+  // 清单（按模块过滤）
+  const curStore = window._wrongStoreFilter || 'all';
+  const list = curStore === 'all' ? all : (byStore[curStore] || []);
+  const storeTabs = `<div class="acc-chips" style="margin:8px 0">
+    <span class="acc-chip${curStore === 'all' ? ' active' : ''}" data-store-filter="all" style="cursor:pointer">全部 ${all.length}</span>` +
+    WRONG_STORES.filter(def => (byStore[def.store] || []).length).map(def =>
+      `<span class="acc-chip${curStore === def.store ? ' active' : ''}" data-store-filter="${def.store}" style="cursor:pointer">${def.icon} ${esc(def.label)} ${(byStore[def.store] || []).length}</span>`
+    ).join('') + '</div>';
+
+  const rowsHtml = list.map(r => {
+    const rev = hubWrongRevFor(r.store, r.key);
+    const due = hubWrongDue(r.store, r.key);
+    const answerCell = r.isScore
+      ? `<b style="color:var(--cn-tag)">自评 ${r.score}/2</b>`
+      : (r.answer ? `<b style="color:var(--cn-tag)">${esc(r.myAnswer || '（未答）')}</b> / ${esc(r.answer)}` : esc(r.myAnswer || '（未答）'));
+    const revCell = rev
+      ? (rev.done
+        ? '<span class="ins-tag ok">已掌握</span>'
+        : `<span class="ins-tag${due ? ' due' : ''}">${due ? '今日到期' : esc(rev.nextDue) + ' 复习'}</span>`)
+      : '<span class="ins-tag">未开始</span>';
+    return `<tr data-store="${r.store}" data-key="${esc(r.key)}">
+      <td>${r.storeIcon} ${esc(r.slug || '—')}</td>
+      <td>${r.no !== '' ? '第' + esc(r.no) + '题' : ''}${r.type ? ' · ' + esc(r.type) : ''}</td>
+      <td>${answerCell}</td>
+      <td><select onchange="updateWrongCause('${r.store}', '${esc(r.key)}', this.value)" class="cause-select">
+        <option value="">未标记</option>
+        ${Object.keys(WRONG_CAUSE_LABELS).concat(Object.keys(WRONG_CAUSE_FALLBACK[r.store] || {})).filter((v, i, a) => a.indexOf(v) === i)
+          .map(k => `<option value="${esc(k)}"${r.cause === k ? ' selected' : ''}>${esc(WRONG_CAUSE_FALLBACK[r.store] ? (WRONG_CAUSE_FALLBACK[r.store][k] || k) : (WRONG_CAUSE_LABELS[k] || k))}</option>`).join('')}
+      </select></td>
+      <td>${revCell}
+        <button type="button" class="ins-btn ghost" style="margin-left:6px;font-size:11px;"
+          onclick="hubWrongGrade('${r.store}', '${esc(r.key)}', ${r.isScore ? (r.score >= 2) : true}); renderWrongAnalysis();"
+          title="标记为「这次做对了」，推进间隔重复">✓ 会了</button>
+      </td>
+    </tr>`;
+  }).join('');
+
   wrap.innerHTML = `
     <div class="wrong-summary-bar">
-      <span>已作答 <strong>${answered.length}</strong> 题</span>
-      <span>正确 <strong style="color:var(--ok, #2e7d32)">${rights.length}</strong></span>
-      <span>错误 <strong style="color:var(--cn-tag)">${wrongs.length}</strong></span>
-      <span>正确率 <strong>${answered.length ? Math.round(rights.length / answered.length * 100) : 0}%</strong></span>
+      <span>错题总数 <strong>${all.length}</strong></span>
+      <span>今日待复习 <strong style="color:var(--cn-tag)">${dueList.length}</strong></span>
+      <span>已掌握 <strong style="color:var(--ok, #2e7d32)">${mastered.length}</strong></span>
+      <span>覆盖模块 <strong>${Object.keys(byStore).length}</strong>/${WRONG_STORES.length}</span>
     </div>
     ${overHtml}
     <div class="wrong-cols">
-      <div class="wrong-col"><h3>错因分布</h3>${barsHtml || '<p style="color:var(--muted);font-size:13px">暂无错题。</p>'}</div>
-      <div class="wrong-col"><h3>每篇正确率</h3><div class="acc-chips">${accHtml}</div></div>
+      <div class="wrong-col"><h3>错因分布</h3>${barsHtml || '<p style="color:var(--muted);font-size:13px">暂无。</p>'}</div>
+      <div class="wrong-col"><h3>各模块错题</h3><div class="acc-chips">${accHtml}</div></div>
     </div>
-    ${wrongs.length ? `<h3 style="margin:18px 0 8px">错题清单（${wrongs.length}）</h3>
-    <table class="vocab-table wrong-table"><thead><tr><th>文章</th><th>题目</th><th>我的/正确</th><th>错因</th></tr></thead><tbody>${rowsHtml}</tbody></table>` : ''}`;
+    <h3 style="margin:18px 0 8px">错题清单（${list.length}）</h3>
+    ${storeTabs}
+    ${list.length ? `<table class="vocab-table wrong-table">
+      <thead><tr><th>文章</th><th>题目</th><th>我的/正确</th><th>错因</th><th>复习</th></tr></thead>
+      <tbody>${rowsHtml}</tbody></table>` : '<p style="color:var(--muted)">该模块暂无错题。</p>'}`;
+
+  // 模块过滤
+  wrap.querySelectorAll('[data-store-filter]').forEach(el => {
+    el.addEventListener('click', () => { window._wrongStoreFilter = el.dataset.storeFilter; renderWrongAnalysis(); });
+  });
 }
+
+/** 更新错因（跨模块：写回各自 store 的 key） */
+function updateWrongCause(store, key, cause) {
+  const def = WRONG_STORES.filter(d => d.store === store)[0];
+  if (!def) return;
+  const recs = hubLS(def.key, []) || [];
+  const r = recs.filter(x => (x.key || ((x.slug || '') + '#' + x.no)) === key)[0];
+  if (r) { r.cause = cause; try { localStorage.setItem(def.key, JSON.stringify(recs)); } catch (e) {} }
+  renderWrongAnalysis();
+}
+window.updateWrongCause = updateWrongCause;
 
 // ===== Tab: 素材 (writing material collection) =====
 window._materialSearch = '';

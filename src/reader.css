@@ -1438,6 +1438,64 @@ button.tag-chip { cursor: pointer; }
 
 /* ===== Writing Workshop ===== */
 .writing-workshop { width: min(92vw, 720px); max-height: 82vh; flex-direction: column; transform: translate(-50%, -50%); }
+
+/* v31: 停靠模式 —— 靠右停靠，左侧原文仍可读可滚动，边读边记 */
+.writing-workshop.docked {
+  left: auto; right: 0; top: 0; bottom: 0;
+  width: var(--ws-dock-w, 620px); max-width: 60vw; max-height: none; height: 100%;
+  transform: none;
+  border-radius: 0;
+  border-right: none; border-top: none; border-bottom: none;
+  box-shadow: -6px 0 28px rgba(0,0,0,.18);
+}
+/* 停靠时主栏整体左移，避免被面板盖住 */
+body.ws-docked .main-wrap,
+body.ws-docked .pane-article { margin-right: var(--ws-dock-w, 620px); transition: margin-right .2s ease; }
+/* v34: 工具栏不让位 —— 保持全宽可点，view/考试/数据 菜单在窄屏下才是救命入口。
+   若同时给 toolbar 加 padding-right，菜单会被面板盖掉，反而更难点。 */
+body.ws-docked .notes-section { display: none !important; }
+
+/* v34: 折叠态 —— 工坊收成一条竖边，正文几乎回到全宽。
+   分屏 / 窄视口下这是唯一能同时「读原文 + 记笔记」的形态。 */
+.writing-workshop.collapsed {
+  width: 44px !important;
+  max-width: 44px !important;
+}
+.writing-workshop.collapsed .workshop-tabs,
+.writing-workshop.collapsed .workshop-body,
+.writing-workshop.collapsed .syntax-actions,
+.writing-workshop.collapsed .ws-resize { display: none !important; }
+.writing-workshop.collapsed .syntax-header { padding: 12px 0; justify-content: center; }
+.writing-workshop.collapsed .syntax-header h3 { display: none; }
+.writing-workshop.collapsed .ws-collapse-btn {
+  display: flex !important;
+  flex-direction: column; align-items: center; gap: 6px;
+  width: 100%; padding: 6px 0;
+  border: none; background: transparent; cursor: pointer;
+  color: var(--fg); font-size: 18px;
+}
+.writing-workshop.collapsed .ws-collapse-count {
+  font-size: 10px; color: var(--muted); font-weight: 700;
+  background: var(--accent-bg); border-radius: 8px; padding: 1px 5px;
+}
+.writing-workshop.collapsed .ws-dock-btn { display: none; }
+/* 折叠时正文让位收窄到 44px */
+body.ws-docked.ws-collapsed .main-wrap,
+body.ws-docked.ws-collapsed .pane-article { margin-right: 44px; }
+
+/* 停靠时可拖拽改变宽度 */
+.ws-resize {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
+  cursor: col-resize; z-index: 5; background: transparent;
+}
+.ws-resize:hover, .ws-resize.active { background: var(--accent); opacity: .35; }
+
+.ws-dock-btn {
+  margin-left: auto; margin-right: 6px;
+  border: 1px solid var(--border); background: var(--panel-bg); color: var(--fg);
+  border-radius: 6px; padding: 2px 8px; cursor: pointer; font-size: 11.5px;
+}
+.ws-dock-btn:hover { border-color: var(--accent); }
 .workshop-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
 .workshop-tab { padding: 6px 12px; border: 1px solid var(--border); background: var(--panel-bg); border-radius: 6px; cursor: pointer; font-size: 13px; white-space: nowrap; }
 .workshop-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
