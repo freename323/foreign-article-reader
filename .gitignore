@@ -11,6 +11,7 @@ questions/_source/
 backups/
 *.json.bak
 reader-backup-*.json
+英语作文包_20260930/
 
 # === AI 工具内部目录 ===
 .mimosa/
