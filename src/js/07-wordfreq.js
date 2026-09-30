@@ -461,28 +461,49 @@
   // ===== FEATURE: 语境内生词复习（v40：遮盖重读 / 段落填空）=====
   // 生词标注过去只有"存"没有"取"——dueReviewCount 只数题型卡与错题，vocab 零检索零调度。
   // 编码特异性（Tulving）：提取语境=编码语境时迁移率最高，所以复习放回原段落；
-  // 闪卡红线：复习单位是段落与词，不做翻卡 UI。点击黑块=想起来了（答对），右键=没想起来（答错）。
-  const VREV_KEY = 'wsj_vocabrev';
-  const VREV_ACTIVE_KEY = 'wsj_vocabrev:active';   // 值 = articleId；复习完成或退出时清除
-  const VREV_MODE_KEY = 'wsj_vocabrev:mode';       // 'mask' | 'cloze'
-  const VREV_STEPS = [1, 2, 4, 8, 16, 35];
-  function vrevAll() { try { return JSON.parse(localStorage.getItem(VREV_KEY)) || {}; } catch (e) { return {}; } }
-  function vrevSave(all) { try { localStorage.setItem(VREV_KEY, JSON.stringify(all)); } catch (e) { showTopToast('⚠ 生词复习记录写入失败（存储已满？）'); } }
-  function vrevAddDays(n) { const d = new Date(); d.setDate(d.getDate() + n); return localDateStr(d); }
-  function vrevKey(aid, word) { return aid + '|' + String(word || '').toLowerCase(); }
-  // 调度纯函数（T07 抽公共调度器前的雏形）：答对步进、答错归 1 天
-  function vocabSchedule(entry, wasCorrect) {
+  // 闪卡红线：复习单位是段落与词，不做翻卡 UI。点击黑块=想起来了，右键=没想起来。
+
+  // ===== v42: 公共间隔调度器（T07）—— 错题 / 生词 / 衔接配对共用 =====
+  // 阶梯对齐考研 6-12 月尺度（Cepeda 元分析：间隔应到周/月级）；出列 ≠ 终点：
+  // done 后 30 天延迟复看，复看答对进 90 天深睡（deep），复看答错复活归 1 天。
+  const WS_STEPS = [1, 3, 7, 16, 35, 90];
+  function wsAddDays(n) { const d = new Date(); d.setDate(d.getDate() + n); return localDateStr(d); }
+  // quality: 0=答错 1=答对但犹豫 2=答对。纯函数：只改 entry，不摸存储。
+  function wsSchedule(entry, quality) {
+    const q = (quality === 0 || quality === 1) ? quality : 2;
     const e = entry || { n: 0 };
-    if (wasCorrect) {
-      e.n = (e.n || 0) + 1;
-      e.nextDue = vrevAddDays(VREV_STEPS[Math.min(e.n - 1, VREV_STEPS.length - 1)]);
+    if (q === 0) {
+      e.n = 0; e.done = false; e.deep = false;
+      e.lapses = (e.lapses || 0) + 1;
+      e.nextDue = wsAddDays(1);
+    } else if (e.deep) {
+      // 深睡期被再次复习且答对：续 90 天，保持深睡
+      e.nextDue = wsAddDays(WS_STEPS[WS_STEPS.length - 1]);
+    } else if (e.done) {
+      // 出列后的延迟复看：答对 → 进 90 天深睡；答错走上面 q===0 分支
+      e.done = false; e.deep = true;
+      e.nextDue = wsAddDays(WS_STEPS[WS_STEPS.length - 1]);
     } else {
-      e.n = 0;
-      e.nextDue = vrevAddDays(1);
+      e.n = (e.n || 0) + 1;
+      const idx = Math.min(e.n - 1, WS_STEPS.length - 1);
+      let days = WS_STEPS[idx];
+      if (q === 1) days = Math.max(1, Math.round(days * 0.7));   // 犹豫档：间隔打七折
+      if (e.n >= WS_STEPS.length) { e.done = true; days = 30; e.n = WS_STEPS.length; }
+      e.nextDue = wsAddDays(days);
     }
     e.last = new Date().toISOString();
     return e;
   }
+
+  const VREV_KEY = 'wsj_vocabrev';
+  const VREV_ACTIVE_KEY = 'wsj_vocabrev:active';   // 值 = articleId；复习完成或退出时清除
+  const VREV_MODE_KEY = 'wsj_vocabrev:mode';       // 'mask' | 'cloze'
+  function vrevAll() { try { return JSON.parse(localStorage.getItem(VREV_KEY)) || {}; } catch (e) { return {}; } }
+  function vrevSave(all) { try { localStorage.setItem(VREV_KEY, JSON.stringify(all)); } catch (e) { showTopToast('⚠ 生词复习记录写入失败（存储已满？）'); } }
+  function vrevAddDays(n) { const d = new Date(); d.setDate(d.getDate() + n); return localDateStr(d); }
+  function vrevKey(aid, word) { return aid + '|' + String(word || '').toLowerCase(); }
+  // v42: 走公共调度器 wsSchedule（布尔兼容包装）
+  function vocabSchedule(entry, wasCorrect) { return wsSchedule(entry, wasCorrect ? 2 : 0); }
   // 本篇到期生词：标注 vocab 条目 ∩（无调度记录=新词即到期 / nextDue<=今天）
   function vocabDueList(aid) {
     let annos = [];

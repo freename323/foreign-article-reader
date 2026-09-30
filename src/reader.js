@@ -1894,28 +1894,49 @@
   // ===== FEATURE: 语境内生词复习（v40：遮盖重读 / 段落填空）=====
   // 生词标注过去只有"存"没有"取"——dueReviewCount 只数题型卡与错题，vocab 零检索零调度。
   // 编码特异性（Tulving）：提取语境=编码语境时迁移率最高，所以复习放回原段落；
-  // 闪卡红线：复习单位是段落与词，不做翻卡 UI。点击黑块=想起来了（答对），右键=没想起来（答错）。
-  const VREV_KEY = 'wsj_vocabrev';
-  const VREV_ACTIVE_KEY = 'wsj_vocabrev:active';   // 值 = articleId；复习完成或退出时清除
-  const VREV_MODE_KEY = 'wsj_vocabrev:mode';       // 'mask' | 'cloze'
-  const VREV_STEPS = [1, 2, 4, 8, 16, 35];
-  function vrevAll() { try { return JSON.parse(localStorage.getItem(VREV_KEY)) || {}; } catch (e) { return {}; } }
-  function vrevSave(all) { try { localStorage.setItem(VREV_KEY, JSON.stringify(all)); } catch (e) { showTopToast('⚠ 生词复习记录写入失败（存储已满？）'); } }
-  function vrevAddDays(n) { const d = new Date(); d.setDate(d.getDate() + n); return localDateStr(d); }
-  function vrevKey(aid, word) { return aid + '|' + String(word || '').toLowerCase(); }
-  // 调度纯函数（T07 抽公共调度器前的雏形）：答对步进、答错归 1 天
-  function vocabSchedule(entry, wasCorrect) {
+  // 闪卡红线：复习单位是段落与词，不做翻卡 UI。点击黑块=想起来了，右键=没想起来。
+
+  // ===== v42: 公共间隔调度器（T07）—— 错题 / 生词 / 衔接配对共用 =====
+  // 阶梯对齐考研 6-12 月尺度（Cepeda 元分析：间隔应到周/月级）；出列 ≠ 终点：
+  // done 后 30 天延迟复看，复看答对进 90 天深睡（deep），复看答错复活归 1 天。
+  const WS_STEPS = [1, 3, 7, 16, 35, 90];
+  function wsAddDays(n) { const d = new Date(); d.setDate(d.getDate() + n); return localDateStr(d); }
+  // quality: 0=答错 1=答对但犹豫 2=答对。纯函数：只改 entry，不摸存储。
+  function wsSchedule(entry, quality) {
+    const q = (quality === 0 || quality === 1) ? quality : 2;
     const e = entry || { n: 0 };
-    if (wasCorrect) {
-      e.n = (e.n || 0) + 1;
-      e.nextDue = vrevAddDays(VREV_STEPS[Math.min(e.n - 1, VREV_STEPS.length - 1)]);
+    if (q === 0) {
+      e.n = 0; e.done = false; e.deep = false;
+      e.lapses = (e.lapses || 0) + 1;
+      e.nextDue = wsAddDays(1);
+    } else if (e.deep) {
+      // 深睡期被再次复习且答对：续 90 天，保持深睡
+      e.nextDue = wsAddDays(WS_STEPS[WS_STEPS.length - 1]);
+    } else if (e.done) {
+      // 出列后的延迟复看：答对 → 进 90 天深睡；答错走上面 q===0 分支
+      e.done = false; e.deep = true;
+      e.nextDue = wsAddDays(WS_STEPS[WS_STEPS.length - 1]);
     } else {
-      e.n = 0;
-      e.nextDue = vrevAddDays(1);
+      e.n = (e.n || 0) + 1;
+      const idx = Math.min(e.n - 1, WS_STEPS.length - 1);
+      let days = WS_STEPS[idx];
+      if (q === 1) days = Math.max(1, Math.round(days * 0.7));   // 犹豫档：间隔打七折
+      if (e.n >= WS_STEPS.length) { e.done = true; days = 30; e.n = WS_STEPS.length; }
+      e.nextDue = wsAddDays(days);
     }
     e.last = new Date().toISOString();
     return e;
   }
+
+  const VREV_KEY = 'wsj_vocabrev';
+  const VREV_ACTIVE_KEY = 'wsj_vocabrev:active';   // 值 = articleId；复习完成或退出时清除
+  const VREV_MODE_KEY = 'wsj_vocabrev:mode';       // 'mask' | 'cloze'
+  function vrevAll() { try { return JSON.parse(localStorage.getItem(VREV_KEY)) || {}; } catch (e) { return {}; } }
+  function vrevSave(all) { try { localStorage.setItem(VREV_KEY, JSON.stringify(all)); } catch (e) { showTopToast('⚠ 生词复习记录写入失败（存储已满？）'); } }
+  function vrevAddDays(n) { const d = new Date(); d.setDate(d.getDate() + n); return localDateStr(d); }
+  function vrevKey(aid, word) { return aid + '|' + String(word || '').toLowerCase(); }
+  // v42: 走公共调度器 wsSchedule（布尔兼容包装）
+  function vocabSchedule(entry, wasCorrect) { return wsSchedule(entry, wasCorrect ? 2 : 0); }
   // 本篇到期生词：标注 vocab 条目 ∩（无调度记录=新词即到期 / nextDue<=今天）
   function vocabDueList(aid) {
     let annos = [];
@@ -4499,29 +4520,29 @@
     vocab: '词汇', syntax: '长难句', logic: '逻辑', qtype: '题型', careless: '粗心', trans: '误译',
     location: '定位错误', trap: '干扰项陷阱', 语境词: '语境词', 误译: '误译', 粗心: '粗心'
   };
-  const WRONG_REV_KEY = 'wsj_wrongrev';     // 侧车：{ '<store>|<key>': {n, nextDue, last, done} }
-  // 间隔序列（与项目既有复习语义对齐：答错回 1 天，答对逐步拉长）
-  const WRONG_STEPS = [1, 2, 4, 8, 16];
-  const WRONG_MASTER_N = 3;
+  const WRONG_REV_KEY = 'wsj_wrongrev';     // 侧车：{ '<store>|<key>': {n, nextDue, last, done, deep, lapses} }
 
-  function wrongRevAll() { return insLoad(WRONG_REV_KEY, {}) || {}; }
+  function wrongRevAll() {
+    const all = insLoad(WRONG_REV_KEY, {}) || {};
+    // v42 惰性迁移：旧版「已掌握」清空过 nextDue（出列即终）。统一补 30 天延迟复看排期——
+    // 读时补、随下一次写落盘，不在这里批量重写。nextDue 已有值（新调度器写的）不动。
+    let dirty = false;
+    Object.keys(all).forEach(k => {
+      const r = all[k];
+      if (r && r.done && !r.deep && !r.nextDue) { r.nextDue = insAddDays(30); dirty = true; }
+    });
+    if (dirty) insSave(WRONG_REV_KEY, all);
+    return all;
+  }
   function wrongRevKey(store, key) { return store + '|' + String(key || ''); }
   function wrongRevOf(w) { return wrongRevAll()[wrongRevKey(w.store, w.key)] || null; }
-  // 复习调度：答对递进、答错归零；连对 WRONG_MASTER_N 次标「已掌握」并移出队列
-  // （说明书写的「连对 2 次」太松 —— 错题只隔一天答对两次就出列，等于没复习；
-  //   项目既有的题型卡复习在「已掌握」后仍按 15 天复看，这里取折中：3 次出列但记录保留）
-  function wrongSchedule(w, wasCorrect) {
+  // v42: 调度统一走 07-wordfreq.js 的 wsSchedule（阶梯 [1,3,7,16,35,90]、出列后 30/90 天
+  // 延迟复看、犹豫档七折）。wasCorrect 布尔 → quality 2/0；「答对但犹豫」由重做界面传 quality=1。
+  function wrongSchedule(w, wasCorrect, quality) {
     const all = wrongRevAll();
     const k = wrongRevKey(w.store, w.key);
-    const r = all[k] || { n: 0, nextDue: insToday(), last: null, done: false };
-    if (wasCorrect) {
-      r.n = (r.n || 0) + 1;
-      if (r.n >= WRONG_MASTER_N) { r.done = true; r.nextDue = ''; }
-      else r.nextDue = insAddDays(WRONG_STEPS[Math.min(r.n, WRONG_STEPS.length - 1)]);
-    } else {
-      r.n = 0; r.done = false; r.nextDue = insAddDays(1);
-    }
-    r.last = new Date().toISOString();
+    const q = (quality === 0 || quality === 1) ? quality : (wasCorrect ? 2 : 0);
+    const r = wsSchedule(all[k], q);
     all[k] = r; insSave(WRONG_REV_KEY, all);
     return r;
   }
@@ -4538,7 +4559,9 @@
           myAnswer: r.myAnswer || '', answer: r.answer || '', cause: r.cause || '',
           at: r.at || '', stem: r.stem || '', options: r.options || {},
           analysis: r.analysis || '', refs: r.refs || [],
-          rev: rev, due: !rev || (!rev.done && (!rev.nextDue || rev.nextDue <= insToday())),
+          rev: rev,
+          // v42 due 语义：未调度/到期即 due；done 条目在延迟复看日也 due；deep 沉睡不算
+          due: !rev || (rev.deep ? false : (rev.done ? !!(rev.nextDue && rev.nextDue <= insToday()) : (!rev.nextDue || rev.nextDue <= insToday()))),
           redo: !!(r.stem && r.options && Object.keys(r.options).length)
         });
       });
@@ -4548,7 +4571,7 @@
   }
   // 供 07-wordfreq.js 的 dueReviewCount() 合并统计（工具栏角标同时算生词与错题）
   function dueWrongCount() {
-    return collectWrongs().filter(w => !w.rev || (!w.rev.done && w.rev.nextDue && w.rev.nextDue <= insToday())).length;
+    return collectWrongs().filter(w => w.due).length;
   }
   function wrongStats(list) {
     let due = 0, done = 0, fresh = 0;
@@ -4642,7 +4665,9 @@
           const p = n => String(n).padStart(2, '0');
           return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
         })() : '未复习';
-        const state = rev.done ? '<span class="ins-tag ok">已掌握</span>'
+        const state = rev.done
+          ? (rev.deep ? '<span class="ins-tag ok">已掌握 · 沉睡</span>'
+                      : '<span class="ins-tag' + (w.due ? ' due' : '') + ' ok">已掌握' + (w.due ? ' · 今日延迟复看' : ' · ' + esc(rev.nextDue) + ' 复看') + '</span>')
           : (rev.nextDue ? '<span class="ins-tag' + (w.due ? ' due' : '') + '">' + (w.due ? '今日到期' : esc(rev.nextDue) + ' 复习') + '</span>' : '<span class="ins-tag">未开始</span>');
         return '<div class="ins-row">' +
           '<div class="ins-row-main">' +
@@ -4686,6 +4711,8 @@
         '<button type="button" class="ins-opt" data-wpick="' + esc(wrongRevKey(w.store, w.key)) + '" data-wopt="' + esc(k) + '">' +
         '<b>' + esc(k) + '</b>' + esc(String(w.options[k]).replace(/^\s*[A-D][.、)]\s*/, '')) + '</button>').join('') +
       '</div>' +
+      '<label style="display:flex;align-items:center;gap:6px;margin:6px 0;font-size:12px;color:var(--muted)">' +
+      '<input type="checkbox" id="wredo-unsure"> 这题我没把握（答对也按犹豫档排期，间隔打七折）</label>' +
       '<div class="ins-dim">答案已遮罩 —— 先自己判断，再点选项。提交后按间隔重复安排下次复习。</div>' +
       '<div class="ins-actions"><button type="button" class="ins-btn ghost" data-wback="1">返回列表</button></div>' +
       '</div>';
@@ -4694,11 +4721,15 @@
     const w = collectWrongs().find(x => wrongRevKey(x.store, x.key) === uid);
     if (!w) { wrongRedoUid = null; renderWrongBook(); return; }
     const ok = String(pick) === String(w.answer);
-    const rev = wrongSchedule(w, ok);
+    const unsureEl = document.getElementById('wredo-unsure');
+    const quality = ok ? (unsureEl && unsureEl.checked ? 1 : 2) : 0;
+    const rev = wrongSchedule(w, ok, quality);
     wrongRedoUid = null;
     renderWrongBook();
     showTopToast(ok
-      ? '答对了 · ' + (rev.done ? '已掌握，移出复习队列' : '下次复习 ' + rev.nextDue)
+      ? (quality === 1
+        ? '答对了（犹豫档）· 下次复习 ' + rev.nextDue
+        : (rev.done ? '已掌握 · 30 天后延迟复看' : '答对了 · 下次复习 ' + rev.nextDue))
       : '还不对 · 1 天后再来（正确 ' + (w.answer || '—') + '）');
   }
 

@@ -72,29 +72,29 @@
     vocab: '词汇', syntax: '长难句', logic: '逻辑', qtype: '题型', careless: '粗心', trans: '误译',
     location: '定位错误', trap: '干扰项陷阱', 语境词: '语境词', 误译: '误译', 粗心: '粗心'
   };
-  const WRONG_REV_KEY = 'wsj_wrongrev';     // 侧车：{ '<store>|<key>': {n, nextDue, last, done} }
-  // 间隔序列（与项目既有复习语义对齐：答错回 1 天，答对逐步拉长）
-  const WRONG_STEPS = [1, 2, 4, 8, 16];
-  const WRONG_MASTER_N = 3;
+  const WRONG_REV_KEY = 'wsj_wrongrev';     // 侧车：{ '<store>|<key>': {n, nextDue, last, done, deep, lapses} }
 
-  function wrongRevAll() { return insLoad(WRONG_REV_KEY, {}) || {}; }
+  function wrongRevAll() {
+    const all = insLoad(WRONG_REV_KEY, {}) || {};
+    // v42 惰性迁移：旧版「已掌握」清空过 nextDue（出列即终）。统一补 30 天延迟复看排期——
+    // 读时补、随下一次写落盘，不在这里批量重写。nextDue 已有值（新调度器写的）不动。
+    let dirty = false;
+    Object.keys(all).forEach(k => {
+      const r = all[k];
+      if (r && r.done && !r.deep && !r.nextDue) { r.nextDue = insAddDays(30); dirty = true; }
+    });
+    if (dirty) insSave(WRONG_REV_KEY, all);
+    return all;
+  }
   function wrongRevKey(store, key) { return store + '|' + String(key || ''); }
   function wrongRevOf(w) { return wrongRevAll()[wrongRevKey(w.store, w.key)] || null; }
-  // 复习调度：答对递进、答错归零；连对 WRONG_MASTER_N 次标「已掌握」并移出队列
-  // （说明书写的「连对 2 次」太松 —— 错题只隔一天答对两次就出列，等于没复习；
-  //   项目既有的题型卡复习在「已掌握」后仍按 15 天复看，这里取折中：3 次出列但记录保留）
-  function wrongSchedule(w, wasCorrect) {
+  // v42: 调度统一走 07-wordfreq.js 的 wsSchedule（阶梯 [1,3,7,16,35,90]、出列后 30/90 天
+  // 延迟复看、犹豫档七折）。wasCorrect 布尔 → quality 2/0；「答对但犹豫」由重做界面传 quality=1。
+  function wrongSchedule(w, wasCorrect, quality) {
     const all = wrongRevAll();
     const k = wrongRevKey(w.store, w.key);
-    const r = all[k] || { n: 0, nextDue: insToday(), last: null, done: false };
-    if (wasCorrect) {
-      r.n = (r.n || 0) + 1;
-      if (r.n >= WRONG_MASTER_N) { r.done = true; r.nextDue = ''; }
-      else r.nextDue = insAddDays(WRONG_STEPS[Math.min(r.n, WRONG_STEPS.length - 1)]);
-    } else {
-      r.n = 0; r.done = false; r.nextDue = insAddDays(1);
-    }
-    r.last = new Date().toISOString();
+    const q = (quality === 0 || quality === 1) ? quality : (wasCorrect ? 2 : 0);
+    const r = wsSchedule(all[k], q);
     all[k] = r; insSave(WRONG_REV_KEY, all);
     return r;
   }
@@ -111,7 +111,9 @@
           myAnswer: r.myAnswer || '', answer: r.answer || '', cause: r.cause || '',
           at: r.at || '', stem: r.stem || '', options: r.options || {},
           analysis: r.analysis || '', refs: r.refs || [],
-          rev: rev, due: !rev || (!rev.done && (!rev.nextDue || rev.nextDue <= insToday())),
+          rev: rev,
+          // v42 due 语义：未调度/到期即 due；done 条目在延迟复看日也 due；deep 沉睡不算
+          due: !rev || (rev.deep ? false : (rev.done ? !!(rev.nextDue && rev.nextDue <= insToday()) : (!rev.nextDue || rev.nextDue <= insToday()))),
           redo: !!(r.stem && r.options && Object.keys(r.options).length)
         });
       });
@@ -121,7 +123,7 @@
   }
   // 供 07-wordfreq.js 的 dueReviewCount() 合并统计（工具栏角标同时算生词与错题）
   function dueWrongCount() {
-    return collectWrongs().filter(w => !w.rev || (!w.rev.done && w.rev.nextDue && w.rev.nextDue <= insToday())).length;
+    return collectWrongs().filter(w => w.due).length;
   }
   function wrongStats(list) {
     let due = 0, done = 0, fresh = 0;
@@ -215,7 +217,9 @@
           const p = n => String(n).padStart(2, '0');
           return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
         })() : '未复习';
-        const state = rev.done ? '<span class="ins-tag ok">已掌握</span>'
+        const state = rev.done
+          ? (rev.deep ? '<span class="ins-tag ok">已掌握 · 沉睡</span>'
+                      : '<span class="ins-tag' + (w.due ? ' due' : '') + ' ok">已掌握' + (w.due ? ' · 今日延迟复看' : ' · ' + esc(rev.nextDue) + ' 复看') + '</span>')
           : (rev.nextDue ? '<span class="ins-tag' + (w.due ? ' due' : '') + '">' + (w.due ? '今日到期' : esc(rev.nextDue) + ' 复习') + '</span>' : '<span class="ins-tag">未开始</span>');
         return '<div class="ins-row">' +
           '<div class="ins-row-main">' +
@@ -259,6 +263,8 @@
         '<button type="button" class="ins-opt" data-wpick="' + esc(wrongRevKey(w.store, w.key)) + '" data-wopt="' + esc(k) + '">' +
         '<b>' + esc(k) + '</b>' + esc(String(w.options[k]).replace(/^\s*[A-D][.、)]\s*/, '')) + '</button>').join('') +
       '</div>' +
+      '<label style="display:flex;align-items:center;gap:6px;margin:6px 0;font-size:12px;color:var(--muted)">' +
+      '<input type="checkbox" id="wredo-unsure"> 这题我没把握（答对也按犹豫档排期，间隔打七折）</label>' +
       '<div class="ins-dim">答案已遮罩 —— 先自己判断，再点选项。提交后按间隔重复安排下次复习。</div>' +
       '<div class="ins-actions"><button type="button" class="ins-btn ghost" data-wback="1">返回列表</button></div>' +
       '</div>';
@@ -267,11 +273,15 @@
     const w = collectWrongs().find(x => wrongRevKey(x.store, x.key) === uid);
     if (!w) { wrongRedoUid = null; renderWrongBook(); return; }
     const ok = String(pick) === String(w.answer);
-    const rev = wrongSchedule(w, ok);
+    const unsureEl = document.getElementById('wredo-unsure');
+    const quality = ok ? (unsureEl && unsureEl.checked ? 1 : 2) : 0;
+    const rev = wrongSchedule(w, ok, quality);
     wrongRedoUid = null;
     renderWrongBook();
     showTopToast(ok
-      ? '答对了 · ' + (rev.done ? '已掌握，移出复习队列' : '下次复习 ' + rev.nextDue)
+      ? (quality === 1
+        ? '答对了（犹豫档）· 下次复习 ' + rev.nextDue
+        : (rev.done ? '已掌握 · 30 天后延迟复看' : '答对了 · 下次复习 ' + rev.nextDue))
       : '还不对 · 1 天后再来（正确 ' + (w.answer || '—') + '）');
   }
 
