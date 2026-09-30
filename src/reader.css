@@ -2083,19 +2083,36 @@ body.paper-open .notes-section {
   font-family: var(--np-sans);
   overflow: hidden;
 }
-/* v35: 折叠态不再整个消失 —— 收成右上角一条操作条，「展开」按钮常驻可点 */
+/* v38: 报纸版折叠态收成右下角一颗「✎ 剪报本」小按钮 —— v35 的常驻工具条会浮在版面报头上，
+   与 DEFENSE SUPPLY 刊头 / ENGLISH EDITION 徽标挤在一行。展开仍是全高抽屉；
+   收起时只留这一个入口，搜标注 / 提取等动作按钮展开后在抽屉头部都能用。 */
 body.paper-open .notes-section.collapsed {
   display: flex !important;
-  bottom: auto; height: auto;
-  width: auto; max-width: min(470px, 94vw);
-  box-shadow: -4px 4px 0 rgba(15,21,28,.10);
+  top: auto; bottom: 16px; right: 16px;
+  width: auto; max-width: none; height: auto;
+  background: var(--np-ink); color: var(--np-paper);
+  border: none; border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(15,21,28,.35);
 }
 body.paper-open .notes-section.collapsed header {
-  padding: 4px 10px;
-  border-bottom: none;
+  padding: 0; border-bottom: none;
 }
-body.paper-open .notes-section.collapsed header h3 { display: none; }
+body.paper-open .notes-section.collapsed header h3,
+body.paper-open .notes-section.collapsed header .actions > *:not(.close-notes) { display: none !important; }
 body.paper-open .notes-section.collapsed header .actions { margin: 0; flex-wrap: nowrap; }
+body.paper-open .notes-section.collapsed .close-notes {
+  font-size: 0; /* 文案由 ::after 接管：折叠态在报纸版里统一显示为「✎ 剪报本」 */
+  color: var(--np-paper) !important;
+  background: transparent !important;
+  border: none !important;
+  padding: 9px 18px; border-radius: 999px; cursor: pointer;
+  font-family: var(--np-sans);
+  white-space: nowrap;
+}
+body.paper-open .notes-section.collapsed .close-notes::after {
+  content: "✎ 剪报本"; font-size: 12.5px; letter-spacing: .06em;
+}
+body.paper-open .notes-section.collapsed .close-notes:hover { background: rgba(255,255,255,.14) !important; }
 body.paper-open .notes-section.collapsed .notes-list,
 body.paper-open .notes-section.collapsed .notes-tabs { display: none !important; }
 body.paper-open .notes-section header {
