@@ -2856,6 +2856,8 @@
     'wsj_wrongrev',
     // 生词语境内复习的调度（v40，遮盖重读/段落填空）—— 07-wordfreq.js；漏了它复习进度全丢
     'wsj_vocabrev',
+    // 词汇收件箱的导入日志（v41）—— WSJ_Hub 回流账本
+    'wsj_inbox:log',
     // 中译英默写：每题成绩 + 错词本 —— 12-dictation.js
     'wsj_dictation:stats', 'wsj_dictation:wrongs'];
   function collectAppKeys() {

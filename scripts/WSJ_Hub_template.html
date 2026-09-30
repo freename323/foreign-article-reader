@@ -500,6 +500,7 @@ body {
   <div class="theme-picker" id="theme-picker"></div>
   <button onclick="location.href='essays/index.html'" title="作文文库：英语作文包的 HTML 调色版范文">✍ 作文</button>
   <button onclick="location.href='writing.html'" title="独立写作页：对照范文记笔记、仿写（与文章内工坊数据互通）">🖋 写作</button>
+  <button onclick="openInbox()" title="词汇收件箱：粘贴外部词表（单词积累.md 等）回流入复习调度">📥 收件箱</button>
   <button onclick="hubBackup()" title="导出所有笔记/标注数据">⬇ 备份</button>
   <button onclick="hubRestore()" title="从备份文件恢复数据">⬆ 恢复</button>
   <button onclick="location.reload()">↻</button>
@@ -2228,6 +2229,140 @@ async function initHub() {
 }
 initHub();
 
+// ===== v41: 词汇收件箱（T03）—— 外部词表回流入复习调度 =====
+// 解析三种格式：① markdown 表格（单词/词性/英文释义/中文释义，取词列+释义列）
+//               ② `word - 释义` / `word | 释义` / `word：释义` 分隔行
+//               ③ 每行一个纯词
+// 入池键与语境内复习同一批：wsj_vocabrev 的 'inbox|<word>'（无原文语境 → 精读分析台的快测形态复习）。
+function inboxParse(text) {
+  const out = [];
+  String(text || '').split(/\r?\n/).forEach(raw => {
+    const line = raw.trim();
+    if (!line) return;
+    if (line.charAt(0) === '|') {
+      const cells = line.split('|').map(s => s.trim()).filter(s => s !== '');
+      if (!cells.length) return;
+      if (cells.every(c => /^:?-{2,}:?$/.test(c))) return;              // 分隔行
+      if (cells.length >= 2 && /词|word|英文/i.test(cells[0])) return;  // 表头行
+      const word = cells[0].replace(/[*`]/g, '');
+      if (word && /[A-Za-z]/.test(word)) out.push({ word: word, gloss: cells.slice(1).join('；') });
+      return;
+    }
+    const m = line.replace(/^[*\-\s]+/, '').match(/^([A-Za-z][A-Za-z'\- ]{0,40}?)\s*(?:—|–|--|—|\||：|:)\s*(.+)$/);
+    if (m) { out.push({ word: m[1].trim(), gloss: m[2].replace(/[*`]/g, '').trim() }); return; }
+    if (/^[A-Za-z][A-Za-z'\- ]{0,40}$/.test(line)) out.push({ word: line, gloss: '' });
+  });
+  // 词内多空格折叠 + 去重（同批粘贴内的重复）
+  const seen = {};
+  return out.map(x => ({ word: x.word.replace(/\s+/g, ' ').trim(), gloss: x.gloss }))
+    .filter(x => x.word && /[A-Za-z]/.test(x.word))
+    .filter(x => { const k = x.word.toLowerCase(); if (seen[k]) return false; seen[k] = 1; return true; });
+}
+function inboxExisting() {
+  const set = {};
+  Object.keys(localStorage).forEach(k => {
+    if (k.indexOf('annotations:') !== 0) return;
+    try {
+      (JSON.parse(localStorage.getItem(k) || '[]') || []).forEach(a => {
+        if (a && a.bucket === 'vocab' && a.text) set[String(a.text).trim().toLowerCase()] = 1;
+      });
+    } catch (e) {}
+  });
+  try {
+    const rev = JSON.parse(localStorage.getItem('wsj_vocabrev') || '{}') || {};
+    Object.keys(rev).forEach(k => { set[k.split('|').pop()] = 1; });
+  } catch (e) {}
+  return set;
+}
+function openInbox() {
+  let ov = document.getElementById('inbox-overlay');
+  if (ov) { ov.style.display = 'block'; return; }
+  ov = document.createElement('div');
+  ov.id = 'inbox-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;display:block;overflow-y:auto';
+  ov.innerHTML =
+    '<div style="max-width:720px;margin:48px auto;background:var(--card-bg);color:var(--fg);border:1px solid var(--rule);border-radius:10px;padding:22px 24px">' +
+    '<h2 style="margin:0 0 6px;font-size:18px">📥 词汇收件箱</h2>' +
+    '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">粘贴任意词表（markdown 表格 / 每行一词 / 词-释义），解析后入复习池；' +
+    '到期的词出现在文章页「工具 → 跨篇生词复习」的快测里。重复词自动跳过。</div>' +
+    '<input id="inbox-src" type="text" placeholder="来源标签（如：单词积累 2026/05/05）" style="width:100%;box-sizing:border-box;border:1px solid var(--rule);border-radius:6px;padding:6px 8px;margin-bottom:8px;background:transparent;color:var(--fg)">' +
+    '<textarea id="inbox-text" rows="10" placeholder="粘贴词表……" style="width:100%;box-sizing:border-box;border:1px solid var(--rule);border-radius:6px;padding:8px;background:transparent;color:var(--fg);font-size:13px;line-height:1.6"></textarea>' +
+    '<div style="display:flex;gap:8px;margin:10px 0;align-items:center">' +
+    '<button class="primary" id="inbox-parse-btn" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer">解析预览</button>' +
+    '<button id="inbox-file-btn" style="border:1px solid var(--rule);background:transparent;color:var(--fg);border-radius:6px;padding:6px 12px;cursor:pointer">从 .md 文件读取…</button>' +
+    '<input type="file" id="inbox-file" accept=".md,.txt" style="display:none">' +
+    '<span id="inbox-status" style="font-size:12px;color:var(--muted)"></span></div>' +
+    '<div id="inbox-preview"></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">' +
+    '<button onclick="document.getElementById(\'inbox-overlay\').style.display=\'none\'" style="border:1px solid var(--rule);background:transparent;color:var(--fg);border-radius:6px;padding:6px 12px;cursor:pointer">关闭</button>' +
+    '<button class="primary" id="inbox-import-btn" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;display:none">导入所选</button></div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  ov.addEventListener('click', e => { if (e.target === ov) ov.style.display = 'none'; });
+  document.getElementById('inbox-parse-btn').addEventListener('click', inboxPreview);
+  document.getElementById('inbox-file-btn').addEventListener('click', () => document.getElementById('inbox-file').click());
+  document.getElementById('inbox-file').addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => { document.getElementById('inbox-text').value = String(rd.result || ''); inboxPreview(); };
+    rd.readAsText(f, 'utf-8');
+  });
+  document.getElementById('inbox-import-btn').addEventListener('click', inboxImport);
+}
+let inboxParsed = [];
+function inboxPreview() {
+  const text = document.getElementById('inbox-text').value;
+  const src = document.getElementById('inbox-src').value.trim() || ('导入 ' + new Date().toISOString().slice(0, 10));
+  inboxParsed = inboxParse(text);
+  const existing = inboxExisting();
+  const dupN = inboxParsed.filter(x => existing[x.word.toLowerCase()]).length;
+  const box = document.getElementById('inbox-preview');
+  const imp = document.getElementById('inbox-import-btn');
+  if (!inboxParsed.length) {
+    box.innerHTML = '<div style="font-size:12px;color:var(--muted)">没有解析出词条 —— 支持markdown 表格行、每行一词、word-释义 三种格式。</div>';
+    imp.style.display = 'none';
+    return;
+  }
+  box.innerHTML = '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">解析出 <b>' + inboxParsed.length + '</b> 词' +
+    (dupN ? '（其中 ' + dupN + ' 词已在库，默认跳过）' : '') + '：</div>' +
+    '<div style="max-height:260px;overflow-y:auto;border:1px solid var(--rule);border-radius:6px;padding:6px">' +
+    inboxParsed.map((x, i) => {
+      const dup = existing[x.word.toLowerCase()];
+      return '<label style="display:flex;gap:6px;align-items:baseline;padding:2px 0;font-size:13px;' + (dup ? 'opacity:.45' : '') + '">' +
+        '<input type="checkbox" data-inbox-idx="' + i + '"' + (dup ? '' : ' checked') + (dup ? ' disabled' : '') + '> ' +
+        '<b>' + x.word.replace(/</g, '&lt;') + '</b>' +
+        '<span style="color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (x.gloss || '').replace(/</g, '&lt;') + '</span>' +
+        (dup ? '<span style="margin-left:auto;font-size:11px">已存在</span>' : '') +
+        '</label>';
+    }).join('') + '</div>';
+  imp.style.display = 'inline-block';
+  imp.dataset.src = src;
+}
+function inboxImport() {
+  const src = document.getElementById('inbox-import-btn').dataset.src || '';
+  const picks = [];
+  document.querySelectorAll('[data-inbox-idx]').forEach(cb => {
+    if (cb.checked) picks.push(inboxParsed[+cb.dataset.inboxIdx]);
+  });
+  if (!picks.length) { alert('没有勾选任何词'); return; }
+  const rev = JSON.parse(localStorage.getItem('wsj_vocabrev') || '{}') || {};
+  const today = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const todayStr = today.getFullYear() + '-' + pad(today.getMonth() + 1) + '-' + pad(today.getDate());
+  picks.forEach(x => {
+    rev['inbox|' + x.word.toLowerCase()] = { n: 0, nextDue: todayStr, last: new Date().toISOString(), gloss: x.gloss, src: src };
+  });
+  try { localStorage.setItem('wsj_vocabrev', JSON.stringify(rev)); } catch (e) { alert('写入失败（存储已满？）'); return; }
+  let log = [];
+  try { log = JSON.parse(localStorage.getItem('wsj_inbox:log') || '[]') || []; } catch (e) {}
+  log.push({ at: new Date().toISOString(), src: src, n: picks.length });
+  try { localStorage.setItem('wsj_inbox:log', JSON.stringify(log)); } catch (e) {}
+  document.getElementById('inbox-import-btn').style.display = 'none';
+  document.getElementById('inbox-preview').innerHTML = '<div style="font-size:13px;color:var(--accent)">✓ 已入池 ' + picks.length + ' 词（来源：' + src.replace(/</g, '&lt;') + '）。' +
+    '到期复习：文章页「工具 → 跨篇生词复习」的收件箱快测。</div>';
+  document.getElementById('inbox-text').value = '';
+}
 </script>
 
 <div id="review-overlay" class="review-overlay" style="display:none" onclick="if(event.target===this)closeReview()">
