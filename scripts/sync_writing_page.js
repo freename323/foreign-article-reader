@@ -23,6 +23,7 @@ const PAGE = `<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>写作工坊 · 独立写作页</title>
+<script src="wordfreq.js"></script>
 <style>
   :root { --ink:#0f151c; --paper:#fbfcfd; --bg:#f2f0e9; --card:#fff; --fg:#1e2940;
           --muted:#6b7494; --accent:#3d52cc; --accent-bg:rgba(61,82,204,.10);
@@ -132,6 +133,18 @@ var state = { readId: '', tab: 'imitate', draftId: '', noteId: '', saveTimer: nu
 // ===== 左栏：范文对照阅读 =====
 function renderReads() {
   var pane = document.getElementById('reads-pane');
+  // v46: 看图写模式 —— 当前草稿带图时，左栏显示图画而非范文（先输出后对照，保住检索练习）
+  if (state.tab === 'imitate' && state.picDraft) {
+    var pd = getDrafts().filter(function (d) { return d.id === state.picDraft; })[0];
+    if (pd && pd.pic) {
+      pane.innerHTML = '<div class="meta">🖼 看图写模式 —— 先看图写三段（右侧），写完再点「🔍 对照范文」显性化差距。</div>' +
+        '<img src="essay_pictures/' + esc(pd.pic) + '" style="width:100%;border:1px solid var(--border);border-radius:10px" alt="图画作文">' +
+        '<div class="bar" style="margin-top:10px"><button type="button" class="ghost" id="pic-exit">退出看图模式</button></div>';
+      var ex = document.getElementById('pic-exit');
+      if (ex) ex.addEventListener('click', function () { state.picDraft = ''; renderReads(); });
+      return;
+    }
+  }
   var all = getReadings();
   if (!all.length) {
     pane.innerHTML = '<div class="empty">范文库还是空的。<br>到任意文章页 → 考试 → 写作 → 写作工坊 → 「⬇ 模板导入」，' +
@@ -194,6 +207,7 @@ function renderImitate(body) {
   var drafts = getDrafts().filter(function (d) { return d.kind === 'big'; });
   drafts.sort(function (a, b) { return (b.updatedAt || '').localeCompare(a.updatedAt || ''); });
   var html = '<div class="bar"><button type="button" class="primary" id="draft-new">＋ 新建仿写</button>' +
+    '<button type="button" class="ghost" id="draft-pic" style="display:none">🖼 看图写</button>' +
     '<span class="status">' + drafts.length + ' 篇 · 自动保存，与文章内工坊互通</span></div>';
   if (drafts.length) {
     html += '<div class="list">' + drafts.map(function (d) {
@@ -214,7 +228,9 @@ function renderImitate(body) {
         '<textarea id="slot-' + s.key + '" rows="6" data-slot="' + s.key + '" placeholder="对照左侧范文，在这一段写你的版本…">' + esc(v) + '</textarea></div>';
     }).join('');
     html += '<div class="bar"><span class="status" id="save-status">已保存</span>' +
-      '<button type="button" class="ghost danger" id="draft-del" style="margin-left:auto">删除这篇草稿</button></div>';
+      '<button type="button" class="ghost" id="draft-diff" style="margin-left:auto">🔍 对照范文</button>' +
+      '<button type="button" class="ghost danger" id="draft-del">删除这篇草稿</button></div>' +
+      '<div id="diff-view"></div>';
   } else {
     html += '<div class="empty">左侧选一篇范文，点「✍ 仿写这篇」；或新建空白仿写。</div>';
   }
@@ -227,6 +243,18 @@ function renderImitate(body) {
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     var all = getDrafts(); all.push(d); saveDrafts(all);
     state.draftId = d.id; renderWrite();
+  });
+  var picBtn = document.getElementById('draft-pic');
+  if (picBtn) picBtn.addEventListener('click', function () {
+    if (!PICTURES.length) return;
+    var pic = PICTURES[Math.floor(Math.random() * PICTURES.length)];
+    var d = { id: genId(), kind: 'big', templateId: 'big_three',
+      title: '🖼 看图写 · ' + (pic.topic || '图画作文') + '（' + new Date().toLocaleDateString() + '）',
+      topic: pic.topic || '图画作文', pic: pic.file, slots: { p1: '', p2: '', p3: '' }, scores: {},
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    var all = getDrafts(); all.push(d); saveDrafts(all);
+    state.draftId = d.id; state.picDraft = d.id;
+    renderWrite();
   });
   body.querySelectorAll('[data-draft]').forEach(function (it) {
     it.addEventListener('click', function (e) {
@@ -273,6 +301,79 @@ function renderImitate(body) {
   document.getElementById('draft-title').addEventListener('input', schedule);
   SLOTS.forEach(function (s) { document.getElementById('slot-' + s.key).addEventListener('input', schedule); });
   window.addEventListener('beforeunload', flush);
+  var diffBtn = document.getElementById('draft-diff');
+  if (diffBtn) diffBtn.addEventListener('click', function () { flush(); renderDiff(cur.id); });
+}
+
+// ===== v46: 对照范文 diff（notice the gap 的显性化）=====
+// 三类差距：① 衔接词有无 ② 句长分布 ③ 范文中低频词升级建议。结论可存进草稿 diffNote。
+var TRANSITIONS = ['however', 'nevertheless', 'nonetheless', 'yet', 'but', 'in contrast', 'by contrast', 'instead', 'therefore', 'thus', 'hence', 'consequently', 'as a result', 'accordingly', 'moreover', 'furthermore', 'in addition', 'additionally', 'besides', 'indeed', 'in fact', 'for instance', 'for example', 'similarly', 'likewise', 'meanwhile', 'subsequently', 'finally', 'eventually', 'firstly', 'secondly', 'in conclusion', 'to sum up', 'overall'];
+function diffSents(p) { return String(p || '').split(/(?<=[.!?])\s+/).filter(function (s) { return s.trim(); }); }
+function diffAvgLen(p) { var ss = diffSents(p); return ss.length ? Math.round(wordNum(p) / ss.length * 10) / 10 : 0; }
+function diffTrans(p) {
+  var lw = String(p || '').toLowerCase();
+  return TRANSITIONS.filter(function (t) { return lw.indexOf(t) >= 0; });
+}
+function diffTierWords(p) {
+  var sets = window.__WORD_FREQ__;
+  if (!sets) return [];
+  var seen = {}, out = [];
+  (String(p || '').toLowerCase().match(/[a-z][a-z'\-]{3,}/g) || []).forEach(function (w) {
+    if (seen[w]) return;
+    if ((sets.m && sets.m.indexOf(w) >= 0) || (sets.l && sets.l.indexOf(w) >= 0) || (sets.x && sets.x.indexOf(w) >= 0)) { seen[w] = 1; out.push(w); }
+  });
+  return out;
+}
+function renderDiff(draftId) {
+  var d = getDrafts().filter(function (x) { return x.id === draftId; })[0];
+  var r = getReadings().filter(function (x) { return x.id === state.readId; })[0] || getReadings()[0];
+  var box = document.getElementById('diff-view');
+  if (!box) return;
+  if (!d || !r) { box.innerHTML = '<div class="empty">没有可对照的范文。</div>'; return; }
+  var yours = SLOTS.map(function (s) { return (d.slots || {})[s.key] || ''; });
+  var rp = (r.paragraphs || []).map(function (p) { return p.text || ''; });
+  if (!rp.length) { box.innerHTML = '<div class="empty">范文无段落文本。</div>'; return; }
+  var pairs = rp.length >= 3
+    ? [[yours[0], rp[0], SLOTS[0].label, (r.paragraphs[0] || {}).label || '范文首段'],
+       [yours[1], rp.slice(1, -1).join('\\n\\n'), SLOTS[1].label, '范文中间段'],
+       [yours[2], rp[rp.length - 1], SLOTS[2].label, (r.paragraphs[rp.length - 1] || {}).label || '范文末段']]
+    : [[yours.join('\\n\\n'), rp.join('\\n\\n'), '你的全文', '范文全文']];
+  var notes = [];
+  var html = '<div class="card" style="margin-top:12px"><div class="head">🔍 对照范文 · ' + esc(r.title || '') + '</div>';
+  pairs.forEach(function (pair, i) {
+    if (!pair[1]) return;
+    var yT = diffTrans(pair[0]), rT = diffTrans(pair[1]);
+    var missT = rT.filter(function (t) { return yT.indexOf(t) < 0; });
+    var extraT = yT.filter(function (t) { return TRANSITIONS.indexOf(t) >= 0 && rT.indexOf(t) < 0; });
+    var tw = diffTierWords(pair[1]).slice(0, 12);
+    var yLen = diffAvgLen(pair[0]), rLen = diffAvgLen(pair[1]);
+    if (missT.length) notes.push('第' + (i + 1) + '段缺衔接词：' + missT.join(', '));
+    if (rLen > yLen + 4) notes.push('第' + (i + 1) + '段句长明显短于范文（你 ' + yLen + ' vs 范文 ' + rLen + '）——可尝试合并短句');
+    html += '<div class="card" style="margin-top:10px;background:var(--bg)">' +
+      '<div class="head">' + esc(pair[2]) + ' ↔ ' + esc(pair[3]) + '</div>' +
+      '<div class="body">你的段落：<b>' + wordNum(pair[0]) + '</b> 词 · 平均句长 <b>' + yLen + '</b> ｜ ' +
+      '范文：<b>' + wordNum(pair[1]) + '</b> 词 · 平均句长 <b>' + rLen + '</b></div>' +
+      (missT.length ? '<div class="body" style="margin-top:6px">范文有而你没用：' + missT.map(esc).join('、') + '</div>' : '') +
+      (extraT.length ? '<div class="body" style="margin-top:4px">你用了而范文没用：' + extraT.map(esc).join('、') + '</div>' : '') +
+      (tw.length ? '<div class="body" style="margin-top:4px">范文的中低频词（用词升级参考）：<b>' + tw.map(esc).join('、') + '</b></div>' : '') +
+      '<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;color:var(--accent)">范文原段</summary>' +
+      '<div class="body" style="font-family:var(--serif);line-height:1.85;margin-top:4px">' + esc(pair[1]) + '</div></details></div>';
+  });
+  html += '<div class="bar"><button type="button" class="ghost" id="diff-save">把对照结论存进草稿</button></div></div>';
+  box.innerHTML = html;
+  var sv = document.getElementById('diff-save');
+  if (sv) sv.addEventListener('click', function () {
+    var all = getDrafts();
+    var dd = all.filter(function (x) { return x.id === draftId; })[0];
+    if (!dd) return;
+    dd.diffNote = new Date().toLocaleString() + '\\n' + (notes.length ? notes.join('\\n') : '衔接词与句长与范文相当');
+    saveDrafts(all);
+    showSaved('已存入草稿 diffNote');
+  });
+}
+function showSaved(msg) {
+  var st = document.getElementById('save-status');
+  if (st) st.textContent = msg;
 }
 
 // ---- 笔记（wsj_writing:notes；历史版本仍由文章内工坊管理，这里只改正文）----
@@ -370,6 +471,7 @@ function renderMaterials(body) {
 }
 
 // ===== init =====
+var PICTURES = [];
 (function init() {
   var reads = getReadings();
   if (reads.length) state.readId = reads[0].id;
@@ -380,6 +482,17 @@ function renderMaterials(body) {
   }
   renderReads();
   renderWrite();
+  // v46: 图画作文图片库（essay_pictures/index.json；fetch 失败/file:// 时功能静默隐藏）
+  try {
+    fetch('essay_pictures/index.json').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (!j) return;
+      PICTURES = (Array.isArray(j) ? j : (j.pictures || [])).map(function (x) {
+        return typeof x === 'string' ? { file: x, topic: '' } : x;
+      }).filter(function (x) { return x.file; });
+      var b = document.getElementById('draft-pic');
+      if (b && PICTURES.length) b.style.display = '';
+    }).catch(function () {});
+  } catch (e) {}
 })();
 </script>
 </body>
