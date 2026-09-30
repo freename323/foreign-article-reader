@@ -50,6 +50,8 @@ for (const p of PICKS) {
 }
 cards.sort((a, b) => a.date.localeCompare(b.date));
 
+// 索引页沿用调色版范文的同一套电子书设计语言（色值/字体/卡片语言取自 HTML调色版 页面本身）：
+// --bg:#EEF1FA --card:#F8F9FD --accent:#3D52CC，Georgia 衬线，渐变刊头 135deg #3D52CC→#2A3BA8。
 const idx = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -57,39 +59,54 @@ const idx = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>作文文库 · Essay Library</title>
 <style>
-  :root { --bg:#f6f3ea; --card:#fff; --fg:#2c3e50; --muted:#7a8794; --accent:#3f5620; --accent-bg:#e8eed7; --border:#d8d2c0; }
-  * { box-sizing: border-box; }
-  body { margin:0; padding:0; background:var(--bg); color:var(--fg);
-         font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
-  .wrap { max-width: 1000px; margin: 0 auto; padding: 28px 20px 60px; }
-  .top { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
-  h1 { font-size:24px; margin:0; color:var(--accent); }
-  .top a.back { margin-left:auto; font-size:13px; color:var(--accent); text-decoration:none;
-                border:1px solid var(--border); border-radius:6px; padding:4px 10px; background:var(--card); }
-  .top a.back:hover { background:var(--accent-bg); }
-  .sub { color:var(--muted); font-size:13px; margin:0 0 20px; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:14px; }
+  :root { --bg:#EEF1FA; --card:#F8F9FD; --text:#1E2940; --subtext:#6B7494;
+          --accent:#3D52CC; --accent-light:#D4DAF5; --border:#D0D5E8; --shadow:rgba(30,41,64,.06); }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html { font-size:16px; scroll-behavior:smooth; }
+  body { font-family:Georgia,"Noto Serif SC","Source Han Serif SC","SimSun",serif;
+         background:var(--bg); color:var(--text); line-height:1.85; min-height:100vh; }
+  .page-header { background:linear-gradient(135deg,#3D52CC 0%,#2A3BA8 100%); color:#fff;
+                 padding:2.6rem 2rem 2rem; position:relative; overflow:hidden; }
+  .page-header::before { content:""; position:absolute; top:-30%; right:-10%; width:220px; height:220px;
+                         border-radius:50%; background:rgba(255,255,255,.08); }
+  .page-header .inner { max-width:960px; margin:0 auto; position:relative; z-index:1; }
+  .page-header h1 { font-size:2rem; font-weight:700; letter-spacing:.02em; margin-bottom:.3rem; }
+  .page-header .subtitle { font-size:.95rem; font-weight:400; opacity:.85; }
+  .page-header .back { position:absolute; top:1.4rem; right:0; z-index:2;
+    color:#fff; text-decoration:none; font-size:.8rem; letter-spacing:.05em;
+    border:1px solid rgba(255,255,255,.55); border-radius:6px; padding:.3rem .8rem; }
+  .page-header .back:hover { background:rgba(255,255,255,.14); }
+  .content-wrap { max-width:960px; margin:0 auto; padding:1.8rem 1.5rem 3rem; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:1.1rem; }
   a.card { display:block; background:var(--card); border:1px solid var(--border); border-radius:10px;
-           padding:16px 18px; text-decoration:none; color:var(--fg); transition:box-shadow .15s ease; }
-  a.card:hover { box-shadow:0 3px 14px rgba(0,0,0,.10); }
-  .card .d { font-size:12px; font-weight:700; color:var(--accent); letter-spacing:.06em; }
-  .card .t { font-size:15px; font-weight:600; margin-top:4px; line-height:1.5; }
-  .card .open { font-size:12px; color:var(--muted); margin-top:8px; }
-  .empty { color:var(--muted); padding:30px 0; }
+           padding:1.3rem 1.4rem 1.1rem; text-decoration:none; color:var(--text); position:relative; overflow:hidden;
+           box-shadow:0 2px 12px var(--shadow); transition:box-shadow .15s ease, transform .15s ease; }
+  a.card::before { content:attr(data-emoji); position:absolute; top:-.2rem; right:.8rem;
+                   font-size:3rem; opacity:.08; line-height:1; pointer-events:none; }
+  a.card:hover { box-shadow:0 6px 20px rgba(30,41,64,.12); transform:translateY(-2px); }
+  .card .label { font-size:.72rem; font-weight:700; letter-spacing:.1em; color:var(--accent);
+                 display:flex; align-items:center; gap:.4rem; }
+  .card .label::before { content:""; display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--accent); }
+  .card .t { font-size:1.05rem; font-weight:700; margin-top:.45rem; line-height:1.55; }
+  .card .open { font-size:.8rem; color:var(--subtext); margin-top:.7rem; }
+  a.card:hover .open { color:var(--accent); }
+  .empty { color:var(--subtext); padding:2rem 0; }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="top">
+<div class="page-header">
+  <a class="back" href="../WSJ_Hub.html">← 返回文库</a>
+  <div class="inner">
     <h1>✍ 作文文库</h1>
-    <a class="back" href="../WSJ_Hub.html">← 返回文库</a>
+    <div class="subtitle">英语作文包 · HTML 调色版范文 · 共 ${cards.length} 篇 —— 点卡片阅读，页面自带排版与配色</div>
   </div>
-  <p class="sub">英语作文包 · HTML 调色版范文（${cards.length} 篇）。点卡片阅读，页面自带排版与配色。</p>
+</div>
+<div class="content-wrap">
   <div class="grid">
-${cards.map(c => `    <a class="card" href="${c.file}">
-      <div class="d">${c.date}</div>
+${cards.map(c => `    <a class="card" data-emoji="📝" href="${c.file}">
+      <div class="label">${c.date}</div>
       <div class="t">${c.theme || c.title}</div>
-      <div class="open">📖 阅读范文 →</div>
+      <div class="open">阅读范文 →</div>
     </a>`).join('\n')}
   </div>
 ${cards.length ? '' : '  <p class="empty">还没有文章 —— 先运行 scripts/sync_essay_html.js 同步作文包。</p>'}
