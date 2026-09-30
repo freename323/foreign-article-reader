@@ -2431,6 +2431,7 @@ function noteStorageCompare(n) {
       '<button type="button" id="reads-next" title="下一篇">→</button>' +
       '</div>' +
       '<div class="ins-dim" style="margin:2px 0 6px">' +
+      '<a href="writing.html" target="_blank" title="独立写作页：左范文右写作，数据互通" style="margin-right:10px;">↗ 独立写作页</a>' +
       (r.date ? esc(r.date) : '') +
       (r.topic ? ' · ' + esc(r.topic) : '') +
       (r.note ? ' · ' + esc(r.note) : '') +
