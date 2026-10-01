@@ -841,7 +841,47 @@ function renderStats(registry) {
   `;
 }
 
-function renderArticles(registry) {
+  // v49: 词汇重逢排序 —— 你的生词池（annotations vocab + vocabrev）与各篇正文词集的交集
+  window.__vrevSort = false;
+  let __overlapCache = null;
+  function vocabPool() {
+    const set = {};
+    Object.keys(localStorage).forEach(k => {
+      if (k.indexOf('annotations:') !== 0) return;
+      try {
+        (JSON.parse(localStorage.getItem(k) || '[]') || []).forEach(a => {
+          if (a && a.bucket === 'vocab' && a.text) set[String(a.text).trim().toLowerCase()] = 1;
+        });
+      } catch (e) {}
+    });
+    try {
+      const rev = JSON.parse(localStorage.getItem('wsj_vocabrev') || '{}') || {};
+      Object.keys(rev).forEach(k => set[k.split('|').pop()] = 1);
+    } catch (e) {}
+    return set;
+  }
+  function overlapCounts() {
+    if (__overlapCache) return __overlapCache;
+    const pool = vocabPool();
+    const out = {};
+    getRegistry().forEach(r => {
+      const art = getArticle(r.id);
+      const words = {};
+      ((art && art.enParas) || []).forEach(p => {
+        (String(p.text || '').toLowerCase().match(/[a-z][a-z'\-]{2,}/g) || []).forEach(w => { words[w] = 1; });
+      });
+      let n = 0;
+      Object.keys(words).forEach(w => { if (pool[w]) n++; });
+      out[r.id] = n;
+    });
+    __overlapCache = out;
+    return out;
+  }
+  function toggleVrevSort() {
+    window.__vrevSort = !window.__vrevSort;
+    renderAll();
+  }
+  function renderArticles(registry) {
   if (registry.length === 0) {
     document.getElementById('tab-articles').innerHTML = `
       <div class="empty-state">
@@ -854,12 +894,23 @@ function renderArticles(registry) {
       </div>`;
     return;
   }
-  const sorted = registry.slice().sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-  let html = '<div class="article-grid">';
+  const sorted = registry.slice().sort((a, b) => {
+    if (window.__vrevSort) {
+      const oc = overlapCounts();
+      return (oc[b.id] || 0) - (oc[a.id] || 0);
+    }
+    return (b.updatedAt || '').localeCompare(a.updatedAt || '');
+  });
+  let html = (window.__vrevSort
+    ? '<div style="margin-bottom:10px;font-size:12px;color:var(--muted)">🔁 已按「与你的生词池重叠词数」降序 —— 重逢是免费的复习（<a href="#" onclick="window.__vrevSort=false;renderAll();return false" style="color:var(--accent)">恢复默认排序</a>）</div>'
+    : '<div style="margin-bottom:10px"><a href="#" onclick="window.__vrevSort=true;renderAll();return false" style="font-size:12px;color:var(--accent);text-decoration:none">🔁 按词汇重逢排序（复习效率选文）</a></div>');
+  const __oc = window.__vrevSort ? overlapCounts() : null;
+  html += '<div class="article-grid">';
   sorted.forEach(r => {
     const annos = getAnnotations(r.id);
     const vocabCount = annos.filter(a => a.bucket === 'vocab').length;
     const noteCount = annos.filter(a => a.bucket === 'note').length;
+    const ov = __oc ? (__oc[r.id] || 0) : null;
     const art = getArticle(r.id);
     const paraCount = art ? art.enParas.length : '?';
     html += `
