@@ -536,6 +536,23 @@
     _syntaxParaIdx = paraIdx || '';
     document.getElementById('syntax-text').textContent = text || '';
     document.getElementById('syntax-note').value = '';
+    // v47 (T05): 结构类型五选一 —— 加工难度序：中心嵌入 > 右分支 > 非谓语悬挂 > 名词化堆叠
+    let structSel = document.getElementById('syntax-struct');
+    if (!structSel) {
+      const noteEl0 = document.getElementById('syntax-note');
+      if (noteEl0 && noteEl0.parentNode) {
+        structSel = document.createElement('select');
+        structSel.id = 'syntax-struct';
+        structSel.style.cssText = 'width:100%;margin-top:6px;border:1px solid var(--border);border-radius:6px;padding:4px 6px';
+        structSel.innerHTML = '<option value="unclassified">结构类型：未分类</option>' +
+          '<option value="center">中心嵌入（主谓被从句整段切断）</option>' +
+          '<option value="branch">右分支嵌套（多层从句/修饰后置）</option>' +
+          '<option value="dangling">非谓语悬挂（分词逻辑主语）</option>' +
+          '<option value="nominal">名词化堆叠（-tion/-ment 名词化）</option>';
+        noteEl0.parentNode.insertBefore(structSel, noteEl0);
+      }
+    }
+    if (structSel) structSel.value = 'unclassified';
     resetStructRows();
     // Create record immediately so it auto-saves on blur
     const plain = (text || '').trim();
@@ -544,7 +561,7 @@
       const key = 'syntax:' + articleId;
       let arr = [];
       try { arr = JSON.parse(localStorage.getItem(key)) || []; } catch(e) {}
-      arr.push({ id: _syntaxAutoId, text: plain, html: document.getElementById('syntax-text').innerHTML, note: '', structure: collectStructRows(), paraIdx: _syntaxParaIdx, createdAt: new Date().toISOString() });
+      arr.push({ id: _syntaxAutoId, text: plain, html: document.getElementById('syntax-text').innerHTML, note: '', structure: collectStructRows(), paraIdx: _syntaxParaIdx, struct: (document.getElementById('syntax-struct') || {}).value || 'unclassified', createdAt: new Date().toISOString() });
       try { localStorage.setItem(key, JSON.stringify(arr)); } catch(e) {}
     }
     panel.classList.add('visible');
@@ -615,7 +632,7 @@
     const key = 'syntax:' + articleId;
     let arr = [];
     try { arr = JSON.parse(localStorage.getItem(key)) || []; } catch (e) { arr = []; }
-    arr.push({ id: genId(), text: plain, html: textEl.innerHTML, note: noteEl.value.trim(), structure: collectStructRows(), paraIdx: _syntaxParaIdx, createdAt: new Date().toISOString() });
+    arr.push({ id: genId(), text: plain, html: textEl.innerHTML, note: noteEl.value.trim(), structure: collectStructRows(), paraIdx: _syntaxParaIdx, struct: (document.getElementById('syntax-struct') || {}).value || 'unclassified', createdAt: new Date().toISOString() });
     try { localStorage.setItem(key, JSON.stringify(arr)); } catch (e) {}
     closeSyntaxPanel();
     showTopToast('已存入句库');
@@ -1886,14 +1903,26 @@ function noteStorageCompare(n) {
       body.innerHTML = html; bindWsAddBtns();
     } else if (tab === 'syntax') {
       const items = getSyntaxData();
-      let html = '<div class="workshop-action-bar"><button type="button" class="primary" id="ws-add-syntax">＋ 新建长难句</button><span style="color:var(--text-muted);font-size:12px;">' + items.length + ' 条</span></div>';
+      let html = '<div class="workshop-action-bar"><button type="button" class="primary" id="ws-add-syntax">＋ 新建长难句</button><span style="color:var(--text-muted);font-size:12px;">' + items.length + ' 条 · 结构类型在标注面板选择，默写面板可按结构分层练</span></div>';
       if (!items.length) { html += '<div class="workshop-empty">还没有长难句记录。<br>点上方"新建长难句"，或选中句子后从浮动菜单存长难句。</div>'; body.innerHTML = html; bindWsAddBtns(); return; }
+      // v47 (T05): 名词化解包映射 —— 把"过程打包成实体"的名词还原回动词（Halliday 语法隐喻）
+      const NOMINAL_MAP = { decision: 'decide', regulation: 'regulate', implementation: 'implement', management: 'manage', development: 'develop', government: 'govern', movement: 'move', agreement: 'agree', statement: 'state', treatment: 'treat', improvement: 'improve', requirement: 'require', achievement: 'achieve', failure: 'fail', refusal: 'refuse', survival: 'survive', removal: 'remove', approval: 'approve', disposal: 'dispose', exposure: 'expose', opposition: 'oppose', composition: 'compose', proposition: 'propose', transition: 'transit', restriction: 'restrict', production: 'produce', reduction: 'reduce', introduction: 'introduce', destruction: 'destroy', construction: 'construct', instruction: 'instruct', inspection: 'inspect', expansion: 'expand', extension: 'extend', comprehension: 'comprehend', persuasion: 'persuade', invasion: 'invade', provision: 'provide', division: 'divide', confusion: 'confuse', discussion: 'discuss', expression: 'express', permission: 'permit', admission: 'admit', emission: 'emit', conversion: 'convert', application: 'apply', implication: 'imply', classification: 'classify', justification: 'justify', identification: 'identify', clarification: 'clarify', qualification: 'qualify', simplification: 'simplify', acceptance: 'accept', existence: 'exist' };
+      const structLabel = { center: '中心嵌入', branch: '右分支嵌套', dangling: '非谓语悬挂', nominal: '名词化堆叠', unclassified: '未分类' };
+      const nominalUnpack = (text) => esc(text).replace(/\b([A-Za-z]+)(?:tion|sion|ment|ance|ence|ism|ity)\b/g, function (w) {
+        const v = NOMINAL_MAP[w.toLowerCase()];
+        return '<b class="nm-w" style="border-bottom:2px dotted var(--accent)" title="' + (v ? '动词原形：' + v : '名词化结构') + '">' + w + '</b>';
+      });
       html += items.map((m, i) => {
         const plain = String((m.html ? m.html.replace(/<[^>]+>/g, '') : m.text) || '').trim();
+        const sl = structLabel[m.struct] || '未分类';
         return '<div class="workshop-card">' +
-        '<div class="workshop-card-head"><span>🧩 句 ' + (i+1) + '</span><button type="button" data-wdel="syntax:' + i + '" class="workshop-del">✕</button></div>' +
+        '<div class="workshop-card-head"><span>🧩 句 ' + (i+1) + '</span>' +
+        '<span class="ins-tag" title="结构类型（标注面板选择）">🧱 ' + esc(sl) + '</span>' +
+        '<button type="button" data-wdel="syntax:' + i + '" class="workshop-del">✕</button></div>' +
         '<div class="workshop-src-row">' + srcChip(m.articleId || (window.__reader && window.__reader.articleId), m.paraIdx) + '</div>' +
         '<div class="workshop-source">' + (m.html ? m.html.replace(/<[^>]+>/g, '') : esc(m.text)) + '</div>' +
+        (m.struct === 'nominal' ? '<div class="ws-slot-tools"><button type="button" class="ins-btn ghost" data-nmunpack="' + i + '">🔍 名词化解包（悬停看动词原形）</button></div>' +
+          '<div id="nm-unpack-' + i + '" style="display:none" class="workshop-source"></div>' : '') +
         (m.note ? '<div><b>笔记：</b>' + esc(m.note) + '</div>' : '') +
         // 长难句正好是默写的好素材（F11）：把这句话带去默写面板
         '<div class="ws-slot-tools"><button type="button" class="ins-btn ghost" data-dict="' + esc(plain.slice(0, 200)) +
@@ -1901,6 +1930,15 @@ function noteStorageCompare(n) {
         '</div>';
       }).join('');
       body.innerHTML = html; bindWsAddBtns();
+      // v47: 名词化解包视图（悬停派生名词显示动词原形）
+      body.querySelectorAll('[data-nmunpack]').forEach(b => b.addEventListener('click', () => {
+        const m = items[+b.dataset.nmunpack];
+        const box = document.getElementById('nm-unpack-' + b.dataset.nmunpack);
+        if (!m || !box) return;
+        const show = box.style.display === 'none';
+        box.style.display = show ? '' : 'none';
+        if (show) box.innerHTML = nominalUnpack(String((m.html ? m.html.replace(/<[^>]+>/g, '') : m.text) || ''));
+      }));
       body.querySelectorAll('[data-dict]').forEach(b => b.addEventListener('click', () => {
         const panel = document.getElementById('writing-workshop');
         if (panel) panel.classList.remove('visible');

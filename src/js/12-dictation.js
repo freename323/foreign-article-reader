@@ -59,13 +59,17 @@
   function dictItems() {
     const en = dictParaMap('en'), cn = dictParaMap('cn');
     const idxs = Object.keys(en).sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
-    // 长难句来源（标 ★）
+    // 长难句来源（标 ★）；v47 同时取结构类型（T05：中心嵌入/右分支/非谓语/名词化）
     const star = {};
+    const structMap = {};
     let syn = [];
     try { syn = JSON.parse(localStorage.getItem('syntax:' + articleId)) || []; } catch (e) { syn = []; }
     syn.forEach(s => {
       const t = String((s && (s.text || s.html || '')) || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-      if (t) star[dictKey(t.slice(0, 60))] = true;
+      if (t) {
+        star[dictKey(t.slice(0, 60))] = true;
+        if (s.struct) structMap[dictKey(t.slice(0, 60))] = s.struct;
+      }
     });
     const items = [], skipped = [];
     idxs.forEach(idx => {
@@ -83,7 +87,8 @@
           made++;
           items.push({
             id: 'p' + idx + 's' + (k + 1), paraIdx: idx, en: s, cn: cnS[k],
-            star: !!star[dictKey(s.slice(0, 60))]
+            star: !!star[dictKey(s.slice(0, 60))],
+            struct: structMap[dictKey(s.slice(0, 60))] || (star[dictKey(s.slice(0, 60))] ? 'unclassified' : '')
           });
         });
         if (!made) skipped.push(idx);
@@ -93,7 +98,8 @@
         if (n < 6 || n > 45) { skipped.push(idx); return; }
         items.push({
           id: 'p' + idx + 'all', paraIdx: idx, en: enText, cn: cnText, whole: true,
-          star: !!star[dictKey(enText.slice(0, 60))]
+          star: !!star[dictKey(enText.slice(0, 60))],
+          struct: structMap[dictKey(enText.slice(0, 60))] || (star[dictKey(enText.slice(0, 60))] ? 'unclassified' : '')
         });
       }
     });
@@ -295,6 +301,12 @@
     const st = dictStats();
     return dictState.items.filter(it => {
       const s = st[articleId + '#' + it.id];
+      // v47: 结构分层（T05）—— struct:前缀的筛选键（star/center/branch/dangling/nominal/unclassified）
+      if (String(dictState.filter).indexOf('struct:') === 0) {
+        const v = dictState.filter.slice(7);
+        if (v === 'star') return !!it.star;
+        return !!it.star && (it.struct || 'unclassified') === v;
+      }
       if (dictState.filter === 'todo') return !s;
       if (dictState.filter === 'fail') { const a = dictStatAccuracy(s); return a != null && a < 80; }
       if (dictState.filter === 'star') return !!it.star;
@@ -375,6 +387,15 @@
       ['fail', '正确率 <80% ' + dictFilteredCount('fail')],
       ['star', '★ 长难句 ' + dictState.items.filter(x => x.star).length]
     ];
+    // v47: 结构分层 chips（T05）—— 中心嵌入 > 右分支 > 非谓语 > 名词化 是加工难度序
+    if (dictState.items.some(x => x.star)) {
+      chips.push(['struct:star', '结构·全部 ' + dictState.items.filter(x => x.star).length]);
+      chips.push(['struct:center', '中心嵌入 ' + dictState.items.filter(x => x.struct === 'center').length]);
+      chips.push(['struct:branch', '右分支 ' + dictState.items.filter(x => x.struct === 'branch').length]);
+      chips.push(['struct:dangling', '非谓语 ' + dictState.items.filter(x => x.struct === 'dangling').length]);
+      chips.push(['struct:nominal', '名词化 ' + dictState.items.filter(x => x.struct === 'nominal').length]);
+      chips.push(['struct:unclassified', '未分类 ' + dictState.items.filter(x => x.star && (x.struct || 'unclassified') === 'unclassified').length]);
+    }
     let html = '<div class="ins-filters">' + chips.map(c =>
       '<button type="button" class="ins-chip' + (dictState.filter === c[0] ? ' active' : '') +
       '" data-dfilter="' + c[0] + '">' + esc(c[1]) + '</button>').join('') +
