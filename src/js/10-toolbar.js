@@ -149,6 +149,7 @@
     // 3) 考试 —— 考试模式的 5 个模块，菜单由 <body data-exam-types> 动态生成（相互独立）
     const examMenu =
       '<div class="menu-section-label">考试模式</div>' +
+      menuItemHTML('open-fullpaper-btn', '📋', '整卷模考（英语一）', '180 分钟完整卷：完形 + 阅读×4 + 新题型 + 翻译 + 写作，统一计时，汇总 100 分制成绩单') +
       menuItemHTML('exam-hub-btn', '🎓', '考试模式总览', '本篇可用的全部考试模块，各自独立进入') +
       '<div class="menu-sep"></div>' +
       examModuleItems();
@@ -251,6 +252,7 @@
     on('crossref-btn', () => toggleCrossRef());
     on('stats-panel-btn', openStatsPanel);
     on('exam-hub-btn', openExamHub);
+    on('open-fullpaper-btn', () => { location.href = 'exam_full.html'; });
     // 精读分析台（11-insights.js）
     on('wrongbook-btn', () => openWrongBook());
     on('radar-panel-btn', () => openRadar());

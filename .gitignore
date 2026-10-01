@@ -1,6 +1,7 @@
 # === 受版权保护的内容（不公开）===
 articles/
 articles_source/
+papers/
 
 # 具体题目（基于受版权保护的文章，不公开）
 # 保留题库规范：_PROMPT_TEMPLATE.md, _ROOT_INDEX.md, _count_words.py

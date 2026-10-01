@@ -138,6 +138,75 @@ async def test_reader_features(page, base, add):
     await page.wait_for_timeout(300)
     body = await page.locator('#stats-body').inner_text()
     add('reader: 统计面板含 今日待复习', '今日待复习' in body)
+    # 考试菜单含整卷模考入口
+    await page.keyboard.press('Escape')
+    await page.click('#menu-exam-btn')
+    await page.wait_for_timeout(200)
+    add('reader: 考试菜单含 整卷模考', await page.locator('#open-fullpaper-btn').count() == 1)
+
+
+async def test_fullpaper(page, base, add):
+    # ===== 整卷模考考务台：状态回读 + 折算分 + 汇总判分 =====
+    await page.goto(f"file://{base / 'exam_full.html'}")
+    await page.evaluate("localStorage.clear()")
+    await page.reload()
+    await page.wait_for_timeout(500)
+    add('full: 五个部分卡片渲染', await page.locator('.fp-sec').count() == 5)
+    # ≥9：wsj_reader:examSlugs 运行期发现可能追加打开过的篇目
+    add('full: 篇目下拉各有 ≥9 个选项',
+        await page.evaluate("() => [...document.querySelectorAll('select[data-pick]')].every(s => s.options.length >= 9)"))
+    add('full: 未开始时全部为 未开始',
+        await page.evaluate("() => [...document.querySelectorAll('[data-state]')].every(b => b.textContent === '未开始')"))
+    # mock 各模块的完成状态（与各模块真实写盘的键一致）
+    await page.evaluate("""() => {
+      localStorage.setItem('cz:ai_cost', JSON.stringify({ 0: { 1: { pick: 'a' } }, examDone: { win: 0, right: 18 } }));
+      localStorage.setItem('wsj_exam:history', JSON.stringify([
+        { slug: 'ai_regulation', mode: 'exam', correct: 3, total: 4, at: '2026-10-01T08:00:00Z' },
+        { slug: 'ammo_shortage', mode: 'exam', correct: 4, total: 4, at: '2026-10-01T08:30:00Z' },
+        { slug: 'fcc_sports', mode: 'exam', correct: 2, total: 4, at: '2026-10-01T09:00:00Z' },
+        { slug: 'haldane', mode: 'practice', correct: 3, total: 4, at: '2026-10-01T09:30:00Z' }
+      ]));
+      ['ai_regulation', 'ammo_shortage', 'fcc_sports', 'haldane'].forEach(slug => {
+        localStorage.setItem('examsess:' + slug, JSON.stringify({ submitted: true, at: '2026-10-01T08:00:00Z' }));
+        localStorage.setItem('examq:' + slug, JSON.stringify({ 1: { myAnswer: 'A' }, 2: { myAnswer: 'B' } }));
+      });
+      localStorage.setItem('nt:horvitz', JSON.stringify({ type: 'A', A: { picks: { 41: 'A' }, done: true, right: 8 } }));
+      localStorage.setItem('transq:moral_econ', JSON.stringify({
+        1: { answer: 'x', score: 2 }, 2: { answer: 'x', score: 1 }, 3: { answer: 'x', score: 2 },
+        4: { answer: 'x', score: 1 }, 5: { answer: 'x', score: 2 }
+      }));
+    }""")
+    await page.reload()
+    await page.wait_for_timeout(500)
+    states = await page.evaluate("() => [...document.querySelectorAll('[data-state]')].map(b => b.textContent)")
+    done_n = states.count('已完成')
+    add('full: mock 后状态变为 已完成', done_n >= 8, str(states))
+    scores = await page.evaluate("() => [...document.querySelectorAll('[data-score]')].map(b => b.textContent)")
+    add('full: 完形折算 9/10', '9.0 / 10' in scores[0], str(scores))
+    add('full: 阅读 r2 满分 10/10', any('10.0 / 10' in s for s in scores), str(scores))
+    # 开始考试 → 写作自评 → 交卷
+    await page.click('#fp-start')
+    await page.wait_for_timeout(200)
+    await page.fill('[data-wscore="A"]', '7')
+    await page.dispatch_event('[data-wscore="A"]', 'change')
+    await page.fill('[data-wscore="B"]', '15')
+    await page.dispatch_event('[data-wscore="B"]', 'change')
+    await page.wait_for_timeout(200)
+    page.on("dialog", lambda d: asyncio.ensure_future(d.accept()))
+    await page.click('#fp-submit')
+    await page.wait_for_timeout(400)
+    total = await page.locator('.fp-total').inner_text()
+    # 期望：完形 9 + 阅读 (7.5+10+5+7.5=30) + 新题型 8 + 翻译 8 + 写作 22 = 77
+    add('full: 汇总总分 77 / 100', total.strip().startswith('77'), total.strip())
+    add('full: 成绩单表格 8 行', await page.locator('.fp-table tbody tr').count() == 8)
+    hist = await page.locator('#fp-history').inner_text()
+    add('full: 历史记录已写入', '最近成绩' in hist and '平均' in hist)
+    # 作废本场：只重置计时与写作，模块作答状态保持
+    await page.click('#fp-reset')
+    await page.wait_for_timeout(300)
+    add('full: 作废后计时归零、写作回未开始',
+        await page.evaluate("() => document.getElementById('fp-clock').textContent.startsWith('03:00') && "
+                            "[...document.querySelectorAll('.fp-sec[data-sec=writing] [data-state]')].every(b => b.textContent === '未开始')"))
 
 
 async def test_algorithm_suite(page, base, add):
@@ -208,6 +277,7 @@ async def main():
         await test_cloze(page, base, add)
         await test_exam(page, base, add)
         await test_reader_features(page, base, add)
+        await test_fullpaper(page, base, add)
         await test_algorithm_suite(page, base, add)
         await browser.close()
 

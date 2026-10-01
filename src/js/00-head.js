@@ -24,6 +24,16 @@
       examTypes: (ds.examTypes || '').split(',').map(s => s.trim()).filter(Boolean)
     };
   })();
+  // 运行期 slug 登记：exam_full.html（整卷模考）读这张表自动发现可用篇目
+  if (articleMeta.slug && articleMeta.hasExam) {
+    try {
+      const map = JSON.parse(localStorage.getItem('wsj_reader:examSlugs') || '{}');
+      if (!map[articleMeta.slug]) {
+        map[articleMeta.slug] = (document.querySelector('.title-block h1:not(.cn)') || {}).textContent || '';
+        localStorage.setItem('wsj_reader:examSlugs', JSON.stringify(map));
+      }
+    } catch (e) {}
+  }
   // 注意：articleId 是 localStorage key 后缀，语义恒为「页面文件名（含 .html）」。
   // 它决定存量标注 / 概要 / 翻译 / 阅读记录的归属，改动会导致数据失联，故保持不变。
   const articleId = location.pathname.split('/').pop() || 'article';
