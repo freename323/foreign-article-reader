@@ -165,6 +165,7 @@
       menuItemHTML('wrongbook-btn', '📕', wrongN > 0 ? '错题本（' + wrongN + ' 道待复习）' : '错题本',
         '四个练习模块的错题汇总，按间隔重复安排复习，可就地重做', '', wrongN > 0 ? 'due-hot' : '') +
       menuItemHTML('radar-panel-btn', '📡', '六题型能力雷达', '按细节 / 推理 / 主旨 / 态度 / 词义 / 例证 统计正确率') +
+      menuItemHTML('trend-panel-btn', '📈', '学习趋势', '词汇增长曲线 / 错因结构上升信号 —— 回答「我比上月强在哪」') +
       '<div class="menu-sep"></div><div class="menu-section-label">文件保存位置</div>' +
       menuItemHTML('save-dir-btn', '📂', saveDirMenuLabel(), saveDirMenuTitle()) +
       '<div class="menu-sep"></div><div class="menu-section-label">备份与恢复</div>' +
@@ -263,6 +264,7 @@
     examModulesAvailable().forEach(m => on('exam-mod-' + m.key, () => examModuleOpen(m)));
     on('review-due-btn', openHub);
     on('vrev-cross-btn', () => openVocabRevPanel());
+    on('trend-panel-btn', () => openTrendPanel());
     // 本篇遮盖复习：开/关切换。开启时同段 ≥3 词提供填空选项，否则直接遮盖
     on('vrev-btn', () => {
       if (vocabMaskActive() || document.querySelector('.vrev-mask, .vrev-cloze')) {

@@ -951,6 +951,81 @@
 
   window.openWrongBook = openWrongBook;
   window.openRadar = openRadar;
+  // ===== v49: 学习趋势（T09）—— 记录型数据 → 决策型结论 =====
+  function openTrendPanel() {
+    const p = insPanel('trend-panel', '📈 学习趋势');
+    const body = document.getElementById('trend-panel-body');
+    const monthOf = iso => String(iso || '').slice(0, 7);
+    // 1) 词汇增长：全库 vocab 标注按月累计 + 进入复习循环的比例
+    const byMonth = {};
+    let total = 0;
+    const rev = insLoad('wsj_vocabrev', {}) || {};
+    const inLoop = Object.keys(rev).filter(k => (rev[k].n || 0) >= 1).length;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || k.indexOf('annotations:') !== 0) continue;
+      try {
+        (JSON.parse(localStorage.getItem(k) || '[]') || []).forEach(a => {
+          if (a && a.bucket === 'vocab' && a.createdAt) {
+            const m = monthOf(a.createdAt);
+            byMonth[m] = (byMonth[m] || 0) + 1;
+            total++;
+          }
+        });
+      } catch (e) {}
+    }
+    const months = Object.keys(byMonth).sort();
+    let cum = 0;
+    const maxCum = total || 1;
+    let growth = '<div class="ins-dim" style="margin:6px 0">词汇增长（累计）</div>';
+    months.forEach(m => {
+      cum += byMonth[m];
+      const pct = Math.round(cum / maxCum * 100);
+      growth += '<div style="display:flex;align-items:center;gap:6px;font-size:12px;margin:2px 0">' +
+        '<span style="width:52px;color:var(--muted)">' + m + '</span>' +
+        '<span style="flex:1;background:var(--rule);border-radius:3px;height:10px;overflow:hidden"><span style="display:block;height:10px;width:' + pct + '%;background:var(--accent)"></span></span>' +
+        '<b style="width:44px;text-align:right">' + cum + '</b></div>';
+    });
+    const concl1 = '累计标注 <b>' + total + '</b> 词，其中 <b>' + inLoop + '</b> 词已进入复习循环' +
+      (total ? '（' + Math.round(inLoop / total * 100) + '%）。' : '。');
+    // 2) 错因结构趋势：四库错因按月，最近两月对比标出上升项
+    const causes = {};
+    WRONG_STORES.forEach(st => {
+      (insLoad(st.key, []) || []).forEach(r => {
+        if (!r || !r.cause || !r.at) return;
+        const m = monthOf(r.at);
+        causes[m] = causes[m] || {};
+        causes[m][r.cause] = (causes[m][r.cause] || 0) + 1;
+      });
+    });
+    const ms = Object.keys(causes).sort();
+    const prevM = ms[ms.length - 2], lastM = ms[ms.length - 1];
+    let causeHtml = '<div class="ins-dim" style="margin:10px 0 6px">错因结构（近三月）</div>';
+    if (!lastM) causeHtml += '<div class="ins-dim">还没有带错因的错题（做模拟套卷/练习并归档错因后出现）。</div>';
+    else {
+      const allC = {};
+      ms.slice(-3).forEach(m => Object.keys(causes[m]).forEach(c => { allC[c] = 1; }));
+      causeHtml += '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+        '<tr><td style="color:var(--muted)">错因</td><td>' + (prevM || '') + '</td><td><b>' + lastM + '</b></td></tr>';
+      Object.keys(allC).sort().forEach(c => {
+        const a = (prevM && causes[prevM] && causes[prevM][c]) || 0;
+        const b = causes[lastM][c] || 0;
+        const rising = b > a && b >= 2;
+        causeHtml += '<tr><td style="padding:2px 0">' + (WRONG_CAUSES[c] || c) + '</td><td>' + a + '</td><td>' +
+          (rising ? '<b style="color:#b22222">' + b + ' ↑</b>' : b) + '</td></tr>';
+      });
+      causeHtml += '</table>';
+      const risers = Object.keys(allC).filter(c => {
+        const a = (prevM && causes[prevM] && causes[prevM][c]) || 0;
+        return (causes[lastM][c] || 0) > a && (causes[lastM][c] || 0) >= 2;
+      });
+      if (risers.length) causeHtml += '<div class="ins-dim" style="margin-top:6px;color:#b22222">上升信号：' +
+        risers.map(c => (WRONG_CAUSES[c] || c)).join('、') + ' —— 这是下一个训练重点。</div>';
+    }
+    body.innerHTML = '<div class="ins-dim">' + concl1 + '</div>' + growth + causeHtml;
+    insOpen(p);
+  }
+
   window.openParaFuncPanel = openParaFuncPanel;
   window.openVocabNet = openVocabNet;
   window.renderParaFuncs = renderParaFuncs;

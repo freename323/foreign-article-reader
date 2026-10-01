@@ -537,7 +537,10 @@
       const lw = w.toLowerCase();
       if (!lw || seen[lw]) return;
       const e = all[vrevKey(aid, lw)];
-      const due = !e || !e.nextDue || e.nextDue <= today;
+      // v49 修正：hub 的生词复习（自评三键）把排期写在标注条目的 a.nextDue 上——
+      // 语境内复习必须尊重这份排期，否则两套调度互相打架（hub 推远的词这里又弹出来）
+      const annDue = !a.nextDue || a.nextDue <= today;
+      const due = e ? (e.nextDue && e.nextDue <= today) : annDue;
       if (!due) return;
       seen[lw] = 1;
       out.push({ word: w, lw: lw, paraIdx: String(a.paraIdx || ''), gloss: (e && e.gloss) || a.note || '', entryKey: vrevKey(aid, lw) });
