@@ -1545,7 +1545,9 @@
             const t = p.tagName;
             if (t === 'MARK' || t === 'SCRIPT' || t === 'STYLE') return NodeFilter.FILTER_REJECT;
             if (p.getAttribute && p.getAttribute('contenteditable') === 'true') return NodeFilter.FILTER_REJECT;
-            if (t === 'SPAN' && p.className && (String(p.className).indexOf('freq-') === 0 || String(p.className).indexOf('exam-hl') >= 0)) return NodeFilter.FILTER_REJECT;
+            // v50 修：跳过生词遮盖块（vrev-）与衔接线索 span（link-）——
+            // 词频 span 若拆进遮盖块，块内文字会恢复可见，答案直接泄漏
+            if (t === 'SPAN' && p.className && (String(p.className).indexOf('freq-') === 0 || String(p.className).indexOf('exam-hl') >= 0 || String(p.className).indexOf('vrev-') === 0 || String(p.className).indexOf('link-') === 0)) return NodeFilter.FILTER_REJECT;
           }
           p = p.parentNode;
         }
@@ -2085,15 +2087,17 @@
     bodies.forEach(body => {
       const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
-          let p = node.parentNode;
-          while (p && p !== body) {
-            if (p.nodeType === 1) {
-              const t = p.tagName;
+          let q = node.parentNode;
+          while (q && q !== body) {
+            if (q.nodeType === 1) {
+              const t = q.tagName;
+              // v50 修：不再跳过词频 span —— freq 开启时到期词也要能遮盖（span 套 span 无害）；
+              // 只排除已是遮盖块/衔接 span 的节点（防重复嵌套）
               if (t === 'MARK' || t === 'SCRIPT' || t === 'STYLE' || t === 'TEXTAREA') return NodeFilter.FILTER_REJECT;
-              if (p.classList && (p.classList.contains('vrev-mask') || p.classList.contains('vrev-cloze') || String(p.className).indexOf('freq-') === 0)) return NodeFilter.FILTER_REJECT;
-              if (p.getAttribute && p.getAttribute('contenteditable') === 'true') return NodeFilter.FILTER_REJECT;
+              if (q.classList && (String(q.className).indexOf('vrev-') === 0 || String(q.className).indexOf('link-') === 0)) return NodeFilter.FILTER_REJECT;
+              if (q.getAttribute && q.getAttribute('contenteditable') === 'true') return NodeFilter.FILTER_REJECT;
             }
-            p = p.parentNode;
+            q = q.parentNode;
           }
           return /[A-Za-z]/.test(node.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
         }
@@ -2282,7 +2286,7 @@
             if (q.nodeType === 1) {
               const t = q.tagName;
               if (t === 'MARK' || t === 'SCRIPT' || t === 'STYLE' || t === 'TEXTAREA') return NodeFilter.FILTER_REJECT;
-              if (q.classList && (String(q.className).indexOf('link-') === 0 || String(q.className).indexOf('freq-') === 0)) return NodeFilter.FILTER_REJECT;
+              if (q.classList && (String(q.className).indexOf('link-') === 0 || String(q.className).indexOf('vrev-') === 0)) return NodeFilter.FILTER_REJECT;
               if (q.getAttribute && q.getAttribute('contenteditable') === 'true') return NodeFilter.FILTER_REJECT;
             }
             q = q.parentNode;
@@ -2344,7 +2348,7 @@
               if (q.nodeType === 1) {
                 const t = q.tagName;
                 if (t === 'MARK' || t === 'SCRIPT' || t === 'STYLE') return NodeFilter.FILTER_REJECT;
-                if (q.classList && String(q.className).indexOf('link-') === 0) return NodeFilter.FILTER_REJECT;
+                if (q.classList && (String(q.className).indexOf('link-') === 0 || String(q.className).indexOf('vrev-') === 0)) return NodeFilter.FILTER_REJECT;
               }
               q = q.parentNode;
             }
