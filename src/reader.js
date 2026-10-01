@@ -4821,6 +4821,9 @@
           myAnswer: r.myAnswer || '', answer: r.answer || '', cause: r.cause || '',
           at: r.at || '', stem: r.stem || '', options: r.options || {},
           analysis: r.analysis || '', refs: r.refs || [],
+          // v50 (T11): 分 store 重做所需题面（完形 opts/expl、翻译 en/ref、新题型 kind）
+          opts: r.opts || [], expl: r.expl || '', kind: r.kind || '',
+          en: r.en || '', ref: r.ref || '',
           rev: rev,
           // v42 due 语义：未调度/到期即 due；done 条目在延迟复看日也 due；deep 沉睡不算
           due: !rev || (rev.deep ? false : (rev.done ? !!(rev.nextDue && rev.nextDue <= insToday()) : (!rev.nextDue || rev.nextDue <= insToday()))),
@@ -4859,6 +4862,25 @@
         if (scope) { wrongFilter.scope = scope.dataset.wscope; renderWrongBook(); return; }
         const redo = t.closest && t.closest('[data-wredo]');
         if (redo) { startWrongRedo(redo.dataset.wredo); return; }
+        // v50 (T11): 翻译自评 —— 对照参考译文后打 对/错，走同一调度器
+        const trans = t.closest && t.closest('[data-wredo-trans]');
+        if (trans) {
+          const w = collectWrongs().find(x => wrongRevKey(x.store, x.key) === wrongRedoUid);
+          if (!w) { renderWrongBook(); return; }
+          const ok = trans.dataset.wredoTrans === '1';
+          wrongSchedule(w, ok);
+          wrongRedoUid = null;
+          renderWrongBook();
+          showTopToast(ok ? '✓ 自评达意 · 下次复习已排期' : '✗ 自评未达意 · 1 天后再来');
+          return;
+        }
+        if (t.closest && t.closest('#wredo-reveal')) {
+          const ref = document.getElementById('wredo-ref');
+          if (ref) ref.style.display = '';
+          const ta = document.getElementById('wredo-trans');
+          if (ta) ta.disabled = true;
+          return;
+        }
         const pick = t.closest && t.closest('[data-wpick]');
         if (pick) { submitWrongRedo(pick.dataset.wpick, pick.dataset.wopt); return; }
         const back = t.closest && t.closest('[data-wback]');
@@ -4962,7 +4984,36 @@
   }
   function renderWrongRedoHTML(w) {
     if (!w) { wrongRedoUid = null; return '<div class="ins-empty">找不到这道题。</div>'; }
+    // v50 (T11): 分 store 渲染 —— 翻译自评流（对照参考译文打对/错），完形选项判分，新题型/阅读共用选项流
+    if (w.store === 'wsj_translation:wrongs') {
+      if (!w.en) return translationFallback(w);
+      return '<div class="ins-redo">' +
+        '<div class="ins-redo-head"><span class="ins-tag type">翻译</span><b>' + esc(w.title || w.slug) + '</b><span class="ins-dim">第 ' + esc(w.no) + ' 句</span></div>' +
+        '<div class="ins-redo-stem" style="font-family:Georgia,serif;line-height:1.85">' + esc(w.en) + '</div>' +
+        '<textarea id="wredo-trans" rows="4" placeholder="把参考译文忘了才有效 —— 先凭记忆写出你的译文" style="width:100%;border:1px solid var(--rule);border-radius:6px;padding:8px;background:var(--panel-bg);color:var(--fg);font-size:13.5px;line-height:1.7;margin:8px 0"></textarea>' +
+        '<div id="wredo-ref" style="display:none;margin:8px 0" class="ins-dim"><b>参考译文：</b>' + esc(w.ref || '（未存）') + '</div>' +
+        '<div class="ins-actions">' +
+        '<button type="button" class="ins-btn ghost" id="wredo-reveal">对照参考译文</button>' +
+        '<button type="button" class="ins-btn" data-wredo-trans="1" style="color:#2a9d6e">✓ 达意（答对）</button>' +
+        '<button type="button" class="ins-btn" data-wredo-trans="0" style="color:#b22222">✗ 未达意（答错）</button>' +
+        '<button type="button" class="ins-btn ghost" data-wback="1">返回列表</button></div></div>';
+    }
+    if (w.store === 'wsj_cloze:wrongs') {
+      if (!w.opts || !w.opts.length) return translationFallback(w);
+      return '<div class="ins-redo">' +
+        '<div class="ins-redo-head"><span class="ins-tag type">完形填空</span><b>' + esc(w.title || w.slug) + '</b><span class="ins-dim">第 ' + esc(w.no) + ' 空' + (w.kind ? ' · ' + esc(w.kind) : '') + '</span></div>' +
+        '<div class="ins-redo-stem">这道空的四个选项（答案已遮罩）：</div>' +
+        '<div class="ins-redo-opts">' + w.opts.map(o =>
+          '<button type="button" class="ins-opt" data-wpick="' + esc(wrongRevKey(w.store, w.key)) + '" data-wopt="' + esc(o) + '">' + esc(o) + '</button>').join('') +
+        '</div>' +
+        (w.expl ? '<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;color:var(--accent)">看该空解析</summary><div class="ins-dim" style="white-space:pre-wrap;margin-top:4px">' + esc(w.expl) + '</div></details>' : '') +
+        '<label style="display:flex;align-items:center;gap:6px;margin:6px 0;font-size:12px;color:var(--muted)">' +
+        '<input type="checkbox" id="wredo-unsure"> 这题我没把握（答对也按犹豫档排期，间隔打七折）</label>' +
+        '<div class="ins-dim">提交后按间隔重复安排下次复习。</div>' +
+        '<div class="ins-actions"><button type="button" class="ins-btn ghost" data-wback="1">返回列表</button></div></div>';
+    }
     const opts = Object.keys(w.options || {});
+    if (!opts.length) return translationFallback(w);
     return '<div class="ins-redo">' +
       '<div class="ins-redo-head">' +
       '<span class="ins-tag type">' + esc(w.storeLabel) + '</span>' +
@@ -4978,6 +5029,14 @@
       '<div class="ins-dim">答案已遮罩 —— 先自己判断，再点选项。提交后按间隔重复安排下次复习。</div>' +
       '<div class="ins-actions"><button type="button" class="ins-btn ghost" data-wback="1">返回列表</button></div>' +
       '</div>';
+  }
+  // T11: 无题面数据的旧记录降级 —— 给回原练习页的跳转，不假装能重做
+  function translationFallback(w) {
+    const page = w.page ? (typeof w.page === 'function' ? w.page(w.slug) : w.page) : '';
+    return '<div class="ins-redo"><div class="ins-redo-head"><span class="ins-tag type">' + esc(w.storeLabel) + '</span><b>' + esc(w.title || w.slug) + '</b></div>' +
+      '<div class="ins-dim">这条错题记录缺重做题面（旧版数据）。<br>' +
+      (page ? '<a class="ins-btn ghost" href="' + esc(page) + '" style="text-decoration:none;margin-top:8px;display:inline-block">回原练习页重做 →</a>' : '') +
+      '</div><div class="ins-actions"><button type="button" class="ins-btn ghost" data-wback="1">返回列表</button></div></div>';
   }
   function submitWrongRedo(uid, pick) {
     const w = collectWrongs().find(x => wrongRevKey(x.store, x.key) === uid);

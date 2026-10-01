@@ -911,13 +911,18 @@ function renderStats(registry) {
     const vocabCount = annos.filter(a => a.bucket === 'vocab').length;
     const noteCount = annos.filter(a => a.bucket === 'note').length;
     const ov = __oc ? (__oc[r.id] || 0) : null;
+    // v50 (T11): 语料双轨标识 —— 运行时从已缓存的正文词数判定（题源规格 = 真题单篇 350-500 词带）
     const art = getArticle(r.id);
+    const wc = (art && art.enParas) ? art.enParas.reduce((s, p) => s + String(p.text || '').split(/\s+/).filter(Boolean).length, 0) : 0;
+    const trackTag = wc ? (wc >= 350 && wc <= 500
+      ? '<span class="ins-tag" style="border-color:var(--accent);color:var(--accent)">题源规格</span> '
+      : '<span class="ins-tag">精读 · ' + wc + ' 词</span> ') : '';
     const paraCount = art ? art.enParas.length : '?';
     html += `
       <div class="article-card">
         <div class="card-title">${esc(r.title || r.id)}</div>
         <div class="card-cn">${esc(r.cnTitle || '')}</div>
-        <div class="card-meta">${esc(r.author || '')} · ${paraCount} 段</div>
+        <div class="card-meta">${trackTag}${esc(r.author || '')} · ${paraCount} 段</div>
         <div class="card-stats">
           <span>📖 ${vocabCount} 生词</span>
           <span>📝 ${noteCount} 笔记</span>
