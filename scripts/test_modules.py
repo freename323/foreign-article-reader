@@ -209,6 +209,61 @@ async def test_fullpaper(page, base, add):
                             "[...document.querySelectorAll('.fp-sec[data-sec=writing] [data-state]')].every(b => b.textContent === '未开始')"))
 
 
+async def test_paperexam(page, base, add):
+    # ===== 真题卷模考：答题卡 + 答案键解析 + 判分数学 =====
+    await page.goto(f"file://{base / 'paper_exam.html'}")
+    await page.evaluate("localStorage.clear()")
+    await page.reload()
+    await page.wait_for_timeout(500)
+    add('paper: 年份下拉 2010-2026 共 17 项',
+        await page.evaluate("() => document.getElementById('year-sel').options.length === 17"))
+    add('paper: PDF iframe 指向 papers/2010-yingyi.pdf',
+        await page.evaluate("() => document.getElementById('pdf-frame').src.includes('papers/2010-yingyi.pdf')"))
+    add('paper: 答题卡 45 个机读题位',
+        await page.evaluate("() => document.querySelectorAll('.as-item').length === 45"))
+    # 点选答题卡（事件委托）：21 选 A → 再点 A 取消 → 再选 B
+    await page.click('.as-item[data-q="21"] button[data-l="A"]')
+    await page.wait_for_timeout(100)
+    saved = await page.evaluate("() => JSON.parse(localStorage.getItem('wsj_paper:2010') || '{}').answers")
+    add('paper: 点选即存（21=A）', saved and saved.get('21') == 'A', str(saved))
+    await page.click('.as-item[data-q="21"] button[data-l="A"]')
+    await page.wait_for_timeout(100)
+    saved = await page.evaluate("() => JSON.parse(localStorage.getItem('wsj_paper:2010') || '{}').answers")
+    add('paper: 再点取消', not saved or not saved.get('21'), str(saved))
+    await page.click('.as-item[data-q="21"] button[data-l="B"]')
+    # 答案键解析：混排格式 1-20 段 + 散对（先展开折叠的答案键面板）
+    await page.evaluate("() => { document.getElementById('key-input').closest('details').open = true; }")
+    await page.fill('#key-input', '1-20 BDCADACBBA DBACDCABCD 21.D 22.C')
+    await page.click('#key-btn')
+    await page.wait_for_timeout(200)
+    keyState = await page.evaluate("() => JSON.parse(localStorage.getItem('wsj_paper:2010') || '{}').key")
+    add('paper: 答案键解析出 22 题', len(keyState) == 22, str(len(keyState)))
+    add('paper: 段式解析 1=B', keyState.get('1') == 'B', str(keyState.get('1')))
+    add('paper: 散对不覆盖段式 21=D', keyState.get('21') == 'D', str(keyState.get('21')))
+    # 判分数学：完形 1-20 全对（10 分）+ 阅读 21 对（2 分），主观 0 → 12
+    await page.evaluate("""() => {
+      const st = JSON.parse(localStorage.getItem('wsj_paper:2010'));
+      const key = st.key;
+      for (let q = 1; q <= 20; q++) st.answers[String(q)] = key[String(q)];
+      st.answers['21'] = 'D';
+      localStorage.setItem('wsj_paper:2010', JSON.stringify(st));
+    }""")
+    await page.reload()
+    await page.wait_for_timeout(400)
+    page.on("dialog", lambda d: asyncio.ensure_future(d.accept()))
+    await page.click('#submit-btn')
+    await page.wait_for_timeout(400)
+    total = await page.locator('.score-total').inner_text()
+    add('paper: 客观判分 12/100（完形全对 + 阅读 21 对）', total.strip().startswith('12'), total.strip())
+    hist = await page.locator('#hist-body').inner_text()
+    add('paper: 历史已写入', '最高' in hist)
+    # 切换年份状态隔离
+    await page.select_option('#year-sel', '2015')
+    await page.wait_for_timeout(300)
+    add('paper: 切年份后答题卡清空（状态隔离）',
+        await page.evaluate("() => Object.keys(JSON.parse(localStorage.getItem('wsj_paper:2015') || '{\"answers\":{}}').answers).length === 0"))
+
+
 async def test_algorithm_suite(page, base, add):
     # 直接在 newtype 页面内 ?test=1 求值 window.__NT__ 做算法断言
     # （旧 _test_suite.html 已在 v28-v30 清理中移除，页面内求值不依赖任何测试文件）
@@ -278,6 +333,7 @@ async def main():
         await test_exam(page, base, add)
         await test_reader_features(page, base, add)
         await test_fullpaper(page, base, add)
+        await test_paperexam(page, base, add)
         await test_algorithm_suite(page, base, add)
         await browser.close()
 

@@ -150,6 +150,7 @@
     const examMenu =
       '<div class="menu-section-label">考试模式</div>' +
       menuItemHTML('open-fullpaper-btn', '📋', '整卷模考（英语一）', '180 分钟完整卷：完形 + 阅读×4 + 新题型 + 翻译 + 写作，统一计时，汇总 100 分制成绩单') +
+      menuItemHTML('open-realpaper-btn', '📄', '真题卷模考（2010-2026）', 'papers/ 里的历年真题 PDF 原卷直接开考：内置答题卡 + 计时 + 答案键判分') +
       menuItemHTML('exam-hub-btn', '🎓', '考试模式总览', '本篇可用的全部考试模块，各自独立进入') +
       '<div class="menu-sep"></div>' +
       examModuleItems();
@@ -253,6 +254,7 @@
     on('stats-panel-btn', openStatsPanel);
     on('exam-hub-btn', openExamHub);
     on('open-fullpaper-btn', () => { location.href = 'exam_full.html'; });
+    on('open-realpaper-btn', () => { location.href = 'paper_exam.html'; });
     // 精读分析台（11-insights.js）
     on('wrongbook-btn', () => openWrongBook());
     on('radar-panel-btn', () => openRadar());
