@@ -89,6 +89,8 @@ switch ($Command) {
         # exam-panel.js 是懒加载的独立文件（源: src/js/06-exam.js），漏拷会导致「改了没生效」
         Copy-Item (Join-Path $ProjectRoot "src\js\06-exam.js") (Join-Path $ArticlesDir "exam-panel.js") -Force
         Write-Ok "reader.css + reader.js + exam-panel.js 已同步"
+        # T11: 练习页脚本源码在 scripts/pages/（git 跟踪），articles/ 里是同步产物
+        node (Join-Path $PSScriptRoot "scripts\sync_page_scripts.js")
     }
 
     "meta" {

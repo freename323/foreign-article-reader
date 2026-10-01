@@ -34,4 +34,11 @@
 6. **主题色值**：文章页 `src/reader.css` 是唯一基准（v37 已对齐）；文库模板 `scripts/WSJ_Hub_template.html` 同步改，改完拷 `articles/WSJ_Hub.html`。
 7. **git 惯例**：提交信息草稿写 `.git_commit_msg_v{N}.txt`，`git commit -F` 提交；`articles/`、`英语作文包_20260930/` 不进 git（版权/个人数据）。git 在 `D:\GitHubDesktop\app-3.5.12\resources\app\git\cmd\git.exe`（系统 PATH 里没有裸 git）。
 8. **代码注释风格**：沿用项目惯例——注释解释"为什么"（约束/踩坑/决策理由），不解释"做什么"。中文注释。
+9. **练习页脚本源码**：`cloze.js / newtype.js / translation.js / exam.js` 的**版本管理源在 `scripts/pages/`**，`articles/` 下的是同步产物（`node scripts/sync_page_scripts.js` 单向覆盖）。改这四个脚本一律改 `scripts/pages/` 再同步；直接改 articles/ 里的会在重跑同步时被覆盖。
+10. **构建产物同步脚本**：跨篇题库 `articles/exambank.js` 由 `scripts/gen_exambank.js` 从 exam_*.html 生成；独立写作页 `articles/writing.html` 与套卷页 `articles/exam_paper.html` 分别由 `scripts/sync_writing_page.js` / `scripts/sync_exam_paper.js` 生成（页面源内联在生成器里，改页面=改生成器重跑）。
+
+## 迭代备忘（未立项的小尾巴）
+
+- **完形错题补原句（T11 v2）**：当前完形错题记录只有选项组+该空解析，没有含空位的原句——原句在文章 token 流里，写入时需跨句重建（用 tIdx 定位后向前后找句末标点）。补上后错题本完形重做可显示挖空句而非裸选项。
+- **翻译错题的原文缺失兜底**：translation 旧记录无 `en` 字段时走跳转降级（v50 已实现），若想恢复历史错题的重做能力，需一次性回填（按 slug 从对应 translation_*.html 的 `__TRANSLATION_QUESTIONS__` 回填 en/ref）。
 9. **背景知识**：任务的理论依据在文件内一段带过即可，实现时以任务规格为准；完整知识体系见各文件"理论依据"节的引用。
