@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Art of Slow Reading / 慢读的艺术 — Bilingual EN/CN Demo</title>
+<link rel="stylesheet" href="reader.css">
+</head>
+<body data-edition="demo_slow_reading" data-has-exam="false" data-exam-types="">
+
+<div class="progress-bar" id="progress-bar"></div>
+
+<div class="toolbar">
+  <button class="toolbar-btn arrow" id="menu-left-btn" onclick="toggleMenu('left')">⚙ <span>▾</span></button>
+  <button class="toolbar-btn active" id="toggle-summary-btn" onclick="toggleSummary()">📌 概要</button>
+  <button class="toolbar-btn active" id="toggle-cn-btn" onclick="toggleCN()">🀄 中文</button>
+  <span class="title inline-stats trans-count note-count">The Art of Slow Reading / 慢读的艺术<span><span title="已修改的中文段落数">✏️译<span id="trans-count"></span></span> <span title="标注数量">📌<span id="note-count"></span></span></span></span>
+  <div class="toolbar-right">
+    <span class="toolbar-clock-area">
+      <span class="toolbar-clock" id="toolbar-clock"></span>
+      <span class="toolbar-timer" id="session-timer"></span>
+      <span class="toolbar-total" id="total-timer"></span>
+    </span>
+    <button class="toolbar-btn arrow" id="menu-right-btn" onclick="toggleMenu('right')">工具 <span>▾</span></button>
+  </div>
+  <div class="menu-dropdown left" id="menu-left">
+    <div class="menu-section-label">字号</div>
+    <div class="menu-size-row">
+      <button onclick="changeSize(-1)">A−</button>
+      <span class="size-display" id="size-display">16px</span>
+      <button onclick="changeSize(1)">A+</button>
+    </div>
+    <div class="menu-sep"></div>
+    <div class="menu-section-label">主题</div>
+    <button class="btn-icon btn-label" onclick="setTheme('green')"><span>🌿</span><span>绿金</span></button>
+    <button class="btn-icon btn-label" onclick="setTheme('light')"><span>☀</span><span>亮色</span></button>
+    <button class="btn-icon btn-label" onclick="setTheme('dark')"><span>🌙</span><span>暗色</span></button>
+    <button class="btn-icon btn-label" onclick="setTheme('system')"><span>⚙</span><span>跟随系统</span></button>
+  </div>
+  <div class="menu-dropdown right" id="menu-right">
+    <div class="menu-section-label">工具</div>
+    <button class="btn-icon btn-label" id="toggle-header-btn" type="button" onclick="toggleHeader()"><span>📰</span><span>标题区显隐</span></button>
+    <button class="btn-icon btn-label" id="toggle-search-btn" type="button" onclick="toggleSearch()"><span>🔍</span><span>全文搜索</span></button>
+    <button class="btn-icon btn-label" id="stats-panel-btn" type="button" onclick="openStatsPanel()"><span>📊</span><span>阅读统计</span></button>
+    <div class="menu-sep"></div>
+    <div class="menu-section-label">导出</div>
+    <button class="btn-icon btn-label" id="export-md-btn" type="button" onclick="exportMarkdown()"><span>⬇</span><span>Markdown 笔记</span></button>
+    <button class="btn-icon btn-label" id="export-json-btn" type="button" onclick="exportAnnotations()"><span>⬇</span><span>JSON 标注</span></button>
+  </div>
+</div>
+
+<div class="container" id="container">
+  <div class="col">
+    <div class="col-header">
+      <span class="lang-tag">EN</span>
+      <h1>The Art of Slow Reading</h1>
+      <div class="col-actions"></div>
+    </div>
+    <div class="col-body en">
+      <blockquote>In an age of infinite scrolling, reading slowly is an act of rebellion.</blockquote>
+<p id="para-1" data-para-num="I" data-para-idx="1">There was a time when reading was not merely an activity but a practice. Monks copied manuscripts by hand, students memorized long passages, and families gathered around a single book for an entire evening. The text was not consumed; it was inhabited. Readers moved through sentences the way a walker moves through a forest — slowly, attentively, aware of every detail.</p>
+<p id="para-2" data-para-num="II" data-para-idx="2">Today, the average person reads more words in a day than a medieval scholar might read in a month. Yet something has been lost. We skim headlines, scroll through feeds, and absorb information in fragments. Our eyes move quickly but our understanding remains shallow. We know many things about many subjects, but understand few things deeply.</p>
+<p id="para-3" data-para-num="III" data-para-idx="3">Slow reading is the antidote. It means choosing one paragraph and sitting with it until it yields its meaning. It means reading a sentence twice, not because it is difficult, but because it deserves attention. It means allowing silence between words, the way a musician allows rests between notes.</p>
+<p id="para-4" data-para-num="IV" data-para-idx="4">The benefits are not merely literary. Research in cognitive psychology shows that deep reading activates regions of the brain associated with empathy, critical thinking, and creative insight. When we read slowly, we do not merely decode words — we simulate experiences, weigh arguments, and inhabit perspectives different from our own.</p>
+<p id="para-5" data-para-num="V" data-para-idx="5">This reader is designed for slow reading. The three-column layout invites comparison between original text, summary, and translation. The annotation tools encourage active engagement. The reading timer tracks not speed but duration. There is no score, no ranking, no gamification — only the text and your attention.</p>
+<p id="para-6" data-para-num="VI" data-para-idx="6">So take a breath. Read the first paragraph again. Notice the word you would normally skip. Ask yourself why the author chose it. That is slow reading. That is learning.</p>
+    </div>
+  </div>
+
+  <div class="col" id="summary-col">
+    <div class="col-header">
+      <span class="lang-tag">摘要</span>
+      <h2>Summary</h2>
+      <div class="col-actions"></div>
+    </div>
+    <div class="col-body summary">
+<p id="sum-1" data-para-idx="1">Reading was once a deliberate practice; now it is often frantic skimming.</p>
+<p id="sum-2" data-para-idx="2">We consume more words but understand less deeply.</p>
+<p id="sum-3" data-para-idx="3">Slow reading means giving text the attention it deserves.</p>
+<p id="sum-4" data-para-idx="4">Deep reading builds empathy, critical thinking, and creativity.</p>
+<p id="sum-5" data-para-idx="5">This tool supports slow, attentive reading without gamification.</p>
+<p id="sum-6" data-para-idx="6">The invitation: read slowly, notice details, learn deeply.</p>
+    </div>
+  </div>
+
+  <div class="col" id="cn-col">
+    <div class="col-header">
+      <span class="lang-tag">CN</span>
+      <h1>慢读的艺术</h1>
+      <div class="col-actions"></div>
+    </div>
+    <div class="col-body cn">
+<p id="cn-1" data-para-idx="1">曾几何时，阅读不仅仅是一种活动，更是一种修行。僧侣手抄经书，学生背诵长文，一家人围坐一本书度过整个傍晚。文本不是被消费的，而是被居住的。读者穿行于句子之间，如同行者穿行于森林——缓慢、专注、觉察每一个细节。</p>
+<p id="cn-2" data-para-idx="2">如今，普通人一天阅读的字数可能超过中世纪学者一个月的阅读量。然而有些东西遗失了。我们浏览标题，滚动信息流，碎片化地吸收信息。眼睛移动得很快，理解却停留在表面。我们对许多事物知道一点，却对很少事物理解深刻。</p>
+<p id="cn-3" data-para-idx="3">慢读是解药。它意味着选一个段落，坐下来，直到它交出意义。它意味着把一句话读两遍，不是因为它难，而是因为它值得被关注。它意味着在词语之间留出沉默，如同音乐家在音符之间留出休止。</p>
+<p id="cn-4" data-para-idx="4">好处不仅在文学层面。认知心理学研究表明，深度阅读会激活大脑中与共情、批判性思维和创造性洞察相关的区域。当我们慢读时，我们不仅仅是在解码文字——我们在模拟体验、权衡论点、 inhabiting 不同于自己的视角。</p>
+<p id="cn-5" data-para-idx="5">这个阅读器是为慢读而设计的。三栏布局鼓励在原文、摘要和译文之间比较。标注工具促进主动参与。阅读计时器记录的不是速度而是时长。没有分数，没有排名，没有游戏化——只有文本和你的注意力。</p>
+<p id="cn-6" data-para-idx="6">所以，深呼吸。把第一段再读一遍。注意那个你通常会跳过的词。问问自己作者为什么选择它。这就是慢读。这就是学习。</p>
+    </div>
+  </div>
+</div>
+
+<script src="reader.js"></script>
+</body>
+</html>
