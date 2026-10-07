@@ -2,6 +2,8 @@
 
 > 把外刊原文 + 中文翻译变成可交互的考研英语学习系统。纯前端、零依赖、离线可用，所有数据存浏览器 localStorage。
 
+**[👉 在线体验 Demo](https://freename323.github.io/foreign-article-reader/)** | **[GitHub 仓库](https://github.com/freename323/foreign-article-reader)**
+
 ## 界面预览
 
 | 报纸版阅读 | 三栏精读 |
